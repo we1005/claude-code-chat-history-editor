@@ -320,7 +320,7 @@
 </script>
 
 <svelte:head>
-  <title>Claude Sessions</title>
+  <title>Claude Code Chat History Editor</title>
 </svelte:head>
 
 <div class="min-h-screen flex flex-col bg-gh-bg text-gh-text">
@@ -344,7 +344,7 @@
             d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
           />
         </svg>
-        <span class="text-2xl font-semibold hidden sm:inline">Claude Sessions</span>
+        <span class="text-lg font-semibold hidden sm:inline">Claude History Editor</span>
       </a>
       {#if version}
         <span

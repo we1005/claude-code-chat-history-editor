@@ -18,6 +18,7 @@ import {
 import { validateChain, autoRepairChain } from './validation.js'
 import { findLinkedAgents } from '../agents.js'
 import { deleteLinkedTodos } from '../todos.js'
+import { getMessageEditorSnapshot, saveMessageField, MessageEditorError } from './editor.js'
 import type {
   Message,
   DeleteSessionResult,
@@ -222,77 +223,43 @@ export const restoreMessage = (
 // Editable JSONL message types — others (summary, file-history-snapshot, etc.) are rejected
 const EDITABLE_MESSAGE_TYPES = new Set(['user', 'human', 'assistant'])
 
-// Update message content by UUID — type-aware (#123 Scope (b)):
-// 1. first `text` block exists -> replace its text (legacy behavior)
-// 2. else first `tool_result` block -> replace its `content`, preserving
-//    tool_use_id / is_error (pairing invariant stays intact)
-// 3. else first `thinking` block -> replace its `thinking`, preserving
-//    signature and any unknown fields via spread
-// 4. else, if no tool_use block is present, append a new text block
-//    (legacy fallback)
-// 5. else (only a tool_use block, no editable target) -> reject. Mirrors
-//    the UI's getCapabilities tool_use exclusion (pairing invariant) —
-//    without this, a direct API PATCH could edit a tool_use-only message
-//    that the UI never exposes an edit affordance for.
-// Non-target blocks are always copied untouched. Reject non-editable message
-// types up front.
+// Compatibility helper: choose an existing text, tool-result or thinking field
+// on the last matching UUID. Preserve its representation; never add a block or
+// flatten a structured content array. The Web editor uses explicit field IDs.
 export const updateMessageContent = (
   projectName: string,
   sessionId: string,
   messageUuid: string,
   newText: string
 ) =>
-  Effect.gen(function* () {
-    const filePath = path.join(getSessionsDir(), projectName, `${sessionId}.jsonl`)
-    const messages = yield* readJsonlFile<Record<string, unknown>>(filePath, { strict: true })
-
-    const idx = messages.findIndex((m) => m.uuid === messageUuid)
-    if (idx === -1) {
-      return { success: false, error: 'Message not found' }
+  Effect.tryPromise(async () => {
+    // Compatibility entry point: callers needing draft conflict detection should
+    // use saveMessageField with the revision captured when the editor was opened.
+    try {
+      const snapshot = await getMessageEditorSnapshot(projectName, sessionId, messageUuid)
+      if (!EDITABLE_MESSAGE_TYPES.has(snapshot.role))
+        return { success: false, error: `Message type '${snapshot.role}' is not editable` }
+      const field =
+        snapshot.fields.find((item) => item.kind === 'text') ??
+        snapshot.fields.find((item) => item.kind === 'tool_result') ??
+        snapshot.fields.find((item) => item.kind === 'thinking')
+      if (!field)
+        return {
+          success: false,
+          error:
+            'Message has no editable text field (tool_use-only and empty structures are not modified)',
+        }
+      await saveMessageField(projectName, sessionId, messageUuid, {
+        revision: snapshot.revision,
+        targetId: field.id,
+        value: newText,
+      })
+      return { success: true }
+    } catch (error) {
+      if (error instanceof MessageEditorError && error.status === 404)
+        return { success: false, error: 'Message not found' }
+      throw error
     }
-
-    const msg = messages[idx]
-    const msgType = typeof msg.type === 'string' ? msg.type : ''
-    if (!EDITABLE_MESSAGE_TYPES.has(msgType)) {
-      return {
-        success: false,
-        error: `Message type '${msgType}' is not editable`,
-      }
-    }
-
-    const payload = (msg.message as Record<string, unknown>) ?? {}
-    const rawContent = payload.content
-    const blocks: Array<Record<string, unknown>> = Array.isArray(rawContent)
-      ? (rawContent as Array<Record<string, unknown>>).map((b) => ({ ...b }))
-      : []
-
-    const textIdx = blocks.findIndex((b) => b.type === 'text')
-    const toolResultIdx = blocks.findIndex((b) => b.type === 'tool_result')
-    const thinkingIdx = blocks.findIndex((b) => b.type === 'thinking')
-    if (textIdx !== -1) {
-      blocks[textIdx] = { ...blocks[textIdx], type: 'text', text: newText }
-    } else if (toolResultIdx !== -1) {
-      blocks[toolResultIdx] = { ...blocks[toolResultIdx], content: newText }
-    } else if (thinkingIdx !== -1) {
-      blocks[thinkingIdx] = { ...blocks[thinkingIdx], thinking: newText }
-    } else if (blocks.some((b) => b.type === 'tool_use')) {
-      return {
-        success: false,
-        error: 'Message contains only a tool_use block, which is not editable',
-      }
-    } else {
-      blocks.push({ type: 'text', text: newText })
-    }
-
-    messages[idx] = {
-      ...msg,
-      message: { ...payload, content: blocks },
-    }
-
-    const newContent = messages.map((m) => JSON.stringify(m)).join('\n') + '\n'
-    yield* Effect.tryPromise(() => fs.writeFile(filePath, newContent, 'utf-8'))
-
-    return { success: true }
   })
 
 // Delete a session and its linked agent/todo files

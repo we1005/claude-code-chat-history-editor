@@ -35,3 +35,20 @@ storybook-static
 packages/vscode-extension/.vscode-test/
 packages/vscode-extension/out/
 .tmp/
+
+# Local research and real session data are not application source.
+/参考项目/
+/.研究临时数据/
+/[0-9][0-9]-*.md
+/ChatGPT生成的参考资料.md
+/第二个参考资料.md
+/opencode.json
+/.run/
+/.editor-test/
+**/.history-editor-backups/
+*.history-editor.lock
+*.tmp
+*.jsonl
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

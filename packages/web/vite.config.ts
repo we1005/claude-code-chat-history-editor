@@ -26,6 +26,6 @@ export default defineConfig(({ isSsrBuild }) => ({
     },
   },
   test: {
-    exclude: ['e2e/**', 'node_modules/**'],
+    exclude: ['e2e/**', 'editor-e2e/**', 'node_modules/**'],
   },
 }))

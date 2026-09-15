@@ -1,15 +1,16 @@
 {
-  "name": "claude-code-sessions",
+  "name": "claude-code-chat-history-editor",
   "version": "0.5.5",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.9",
-  "description": "Claude Code session management tools",
+  "description": "Precise local Claude Code history editing with revision checks, backups and field-level restore",
   "repository": {
     "type": "git",
-    "url": "https://github.com/es6kr/claude-code-sessions"
+    "url": "https://github.com/we1005/claude-code-chat-history-editor"
   },
   "scripts": {
+    "start:editor": "node scripts/start-editor.mjs",
     "dev": "pnpm --filter @claude-sessions/web dev",
     "dev:mcp": "pnpm --filter claude-sessions-mcp dev",
     "build": "pnpm -r build",
@@ -23,6 +24,7 @@
     "test:act": "act push --job test -P ubuntu-latest=catthehacker/ubuntu:act-latest --container-architecture linux/amd64",
     "test:core": "pnpm --filter @claude-sessions/core test",
     "test:e2e": "pnpm --filter @claude-sessions/web exec playwright test",
+    "test:editor": "pnpm build:core && pnpm --filter @claude-sessions/web exec playwright test --config playwright.editor.config.ts",
     "test:mcp": "pnpm --filter claude-sessions-mcp test",
     "test:vsx": "pnpm --filter claude-sessions test",
     "test:web": "pnpm --filter @claude-sessions/web test",

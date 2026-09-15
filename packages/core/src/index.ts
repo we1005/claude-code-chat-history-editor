@@ -193,3 +193,13 @@ export {
   repairParentUuidChain,
   autoRepairChain,
 } from './session/validation.js'
+export {
+  MessageEditorError,
+  getMessageEditorSnapshot,
+  saveMessageField,
+  listMessageFieldBackups,
+  restoreMessageField,
+  type MessageEditorSnapshot,
+  type MessageTextField,
+  type MessageFieldBackup,
+} from './session/editor.js'

@@ -1,84 +1,43 @@
-name: CI
+name: Editor CI
 
 on:
   push:
-    branches:
-      - develop
-      - main
-      - production
+    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build
-        run: pnpm build
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Check reserved script names
-        run: pnpm lint:scripts
-
-      - name: Test (core, mcp, web)
-        run: pnpm test:core && pnpm test:mcp && pnpm test:web
-
-      - name: Test (vscode extension - Linux)
-        if: ${{ !env.ACT && matrix.os == 'ubuntu-latest' }}
-        run: xvfb-run -a pnpm --filter claude-sessions test
-
-      - name: Test (vscode extension - Windows)
-        if: ${{ !env.ACT && matrix.os == 'windows-latest' }}
-        run: pnpm --filter claude-sessions test
-
-  e2e:
+  editor:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '24'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build core
-        run: pnpm build:core
-
-      - name: Install Playwright browsers
-        run: pnpm --filter @claude-sessions/web exec playwright install chromium --with-deps
-
-      - name: Run e2e tests
-        run: pnpm test:e2e
+          node-version: '24.15.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build:core
+      - run: pnpm --filter @claude-sessions/core typecheck
+      - run: pnpm --filter @claude-sessions/core test
+      - run: pnpm --filter @claude-sessions/web typecheck
+      - run: pnpm --filter @claude-sessions/web test
+      - run: pnpm build:web
+      - run: pnpm --filter @claude-sessions/web exec playwright install chromium --with-deps
+      - run: pnpm test:editor
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: isolated-editor-test-results
+          path: .editor-test/
+          include-hidden-files: true
+          retention-days: 7

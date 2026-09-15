@@ -295,7 +295,7 @@
 </script>
 
 <svelte:head>
-  <title>{displayTitle} - Claude Sessions</title>
+  <title>{displayTitle} - Claude History Editor</title>
 </svelte:head>
 
 <div class="h-screen bg-gh-bg">

@@ -7,7 +7,7 @@
   import type { AgentInfo, Message, SessionMeta, TodoItem } from '$lib/api'
   import * as api from '$lib/api'
   import { getDisplayTitle, truncate } from '$lib/utils'
-  import MessageEditor from './MessageEditor.svelte'
+  import HistoryMessageEditor from './HistoryMessageEditor.svelte'
   import MessageFilter from './MessageFilter.svelte'
   import MessageList from './MessageList.svelte'
   import ScrollButtons from './ScrollButtons.svelte'
@@ -233,66 +233,13 @@
 
   // Message editing state
   let editingMessage = $state<Message | null>(null)
-  let showEditor = $state(false)
-  let editError = $state<string | null>(null)
-
-  // Read the editable text from a message: prefer message.content, fall back to
-  // top-level content. Mirrors updateMessageContent's type-aware resolution
-  // order (#123): first 'text' block -> first 'tool_result' content ->
-  // first 'thinking' text, so the editor opens on the field the save will write.
-  const getMessageText = (m: Message | null): string => {
-    if (!m) return ''
-    const nested = (m.message as { content?: unknown } | undefined)?.content
-    const direct = (m as unknown as { content?: unknown }).content
-    const source = nested ?? direct
-    if (typeof source === 'string') return source
-    const items = Array.isArray(source)
-      ? (source as Array<Record<string, unknown>>)
-      : typeof source === 'object' && source !== null
-        ? [source as Record<string, unknown>]
-        : []
-    const textBlock = items.find((b) => b?.type === 'text')
-    if (typeof textBlock?.text === 'string') return textBlock.text
-    const toolResult = items.find((b) => b?.type === 'tool_result')
-    if (typeof toolResult?.content === 'string') return toolResult.content
-    const thinking = items.find((b) => b?.type === 'thinking')
-    if (typeof thinking?.thinking === 'string') return thinking.thinking
-    return ''
-  }
 
   const handleEditMessage = (msg: Message) => {
     editingMessage = msg
-    showEditor = true
-    editError = null
-  }
-
-  const handleSaveEdit = async (newText: string) => {
-    if (!session || !editingMessage?.uuid) return
-    try {
-      const result = await api.editMessageContent(
-        session.projectName,
-        session.id,
-        editingMessage.uuid,
-        newText
-      )
-      if (!result.success) {
-        editError = result.error ?? 'Failed to update message'
-        return
-      }
-      showEditor = false
-      editingMessage = null
-      editError = null
-      await syncFromServer()
-    } catch (e) {
-      console.error('Failed to edit message:', e)
-      editError = e instanceof Error ? e.message : 'Failed to update message'
-    }
   }
 
   const handleCancelEdit = () => {
-    showEditor = false
     editingMessage = null
-    editError = null
   }
 
   // Server sync — refreshes messages from server to get chain repair results
@@ -667,30 +614,15 @@
   {/if}
 
   <!-- Message Editor -->
-  {#if editingMessage}
-    <MessageEditor
-      show={showEditor}
-      initialValue={getMessageText(editingMessage)}
-      onSave={handleSaveEdit}
-      onCancel={handleCancelEdit}
-    />
-    {#if editError}
-      <div
-        class="fixed bottom-6 right-6 z-50 max-w-sm rounded-md border border-red-500/40 bg-red-900/80 px-4 py-3 text-sm text-white shadow-lg"
-        role="alert"
-      >
-        <div class="flex items-start gap-3">
-          <span>{editError}</span>
-          <button
-            type="button"
-            class="opacity-80 hover:opacity-100"
-            onclick={() => (editError = null)}
-            aria-label="Dismiss error"
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-    {/if}
+  {#if editingMessage && session}
+    {#key `${session.projectName}/${session.id}/${editingMessage.uuid}`}
+      <HistoryMessageEditor
+        projectName={session.projectName}
+        sessionId={session.id}
+        messageUuid={editingMessage.uuid}
+        onSaved={syncFromServer}
+        onClose={handleCancelEdit}
+      />
+    {/key}
   {/if}
 </section>

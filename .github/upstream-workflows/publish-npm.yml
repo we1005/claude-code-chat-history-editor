@@ -1,3 +1,4 @@
+# Historical upstream workflow, not enabled for this fork.
 name: Publish to npm
 
 on:

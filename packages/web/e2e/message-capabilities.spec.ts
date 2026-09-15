@@ -15,7 +15,7 @@ const FIXTURE_PATH = path.resolve(
 // Exercises the issue #123 Scope (b) capability matrix end-to-end:
 // tool_result and thinking messages must expose an edit affordance whose save
 // path preserves structured fields (tool_use_id / is_error / signature), while
-// tool_use messages must never be editable (pairing invariant).
+// tool_use-only messages remain read-only; mixed messages use field-scoped edits.
 const ORIGINAL_FIXTURE =
   [
     '{"type":"user","uuid":"cap-msg-1","sessionId":"session-capability-matrix","timestamp":"2025-12-23T05:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Run the listing"}]}}',
@@ -55,10 +55,12 @@ const editMessage = async (
   // Assert the save round-trip actually hits the API (the editor cancels
   // silently when it believes the value is unchanged)
   const patchResponse = page.waitForResponse(
-    (r) => r.url().includes('/api/message') && r.request().method() === 'PATCH'
+    (r) => r.url().includes('/api/editor/message') && r.request().method() === 'PATCH'
   )
-  await dialog.locator('button', { hasText: 'Save' }).click()
+  await dialog.getByTestId('save-field').click()
   expect((await patchResponse).ok()).toBe(true)
+  await expect(dialog.getByTestId('editor-success')).toContainText('已保存')
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(dialog).not.toBeVisible()
 }
 
@@ -113,10 +115,17 @@ test.describe('Message capabilities (issue #123 Scope (b))', () => {
     await expect(container.locator('button', { hasText: '🗑️' })).toHaveCount(1)
   })
 
-  test('thinking paired with tool_use is not editable (pairing invariant)', async ({ page }) => {
+  test('thinking can be edited while its tool_use sibling remains untouched', async ({ page }) => {
     const container = page.locator('[data-msg-id="cap-msg-6"]')
     await container.hover()
-    await expect(container.locator('button', { hasText: '📝' })).toHaveCount(0)
+    await expect(container.locator('button', { hasText: '📝' })).toHaveCount(1)
+    await editMessage(page, 'cap-msg-6', 'revised mixed thinking')
+    expect(contentOf(readFixtureLines()[5])[1]).toEqual({
+      type: 'tool_use',
+      id: 'toolu_cap2',
+      name: 'Read',
+      input: { file_path: 'a.txt' },
+    })
     await expect(container.locator('button', { hasText: '🗑️' })).toHaveCount(1)
   })
 

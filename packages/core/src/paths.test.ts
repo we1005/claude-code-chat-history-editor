@@ -5,7 +5,6 @@ import {
   folderNameEquals,
   toRelativePath,
   expandHomePath,
-  folderNameToPath,
   findProjectByWorkspacePath,
   extractCwdFromContent,
   isSessionFile,
@@ -212,17 +211,8 @@ describe('Windows path separator issue (issue #14)', () => {
    * - toRelativePath compares case-sensitively with os.homedir() (C:\Users\...)
    * - Comparison fails, returns full path instead of ~/...
    */
-  it('toRelativePath should handle drive letter case insensitively on Windows', async () => {
-    const nodePath = await import('path')
-    const os = await import('os')
-
-    const homeDir = os.homedir()
-
-    // pathToFolderName lowercases drive, folderNameToDisplayPath converts back
-    const displayHome = folderNameToDisplayPath(pathToFolderName(homeDir))
-    const testPath = displayHome + nodePath.sep + 'projects' + nodePath.sep + 'work'
-
-    const result = toRelativePath(testPath, homeDir)
+  it('toRelativePath handles drive letter case independently of the host HOME', () => {
+    const result = toRelativePath('c:\\Users\\tester\\projects\\work', 'C:\\Users\\tester')
     expect(result).toBe('~/projects/work')
   })
 
@@ -255,7 +245,7 @@ describe('Windows path separator issue (issue #14)', () => {
   /**
    * Full integration test: extension.ts resumeSession flow
    */
-  it('resumeSession should produce correct cwd path', async () => {
+  it('registered project metadata preserves an ambiguous slug when resolving cwd', async () => {
     const nodePath = await import('path')
 
     // Same as extension.ts line 471
@@ -265,8 +255,13 @@ describe('Windows path separator issue (issue #14)', () => {
     // Step 1: Convert path to folder name (what Claude Code stores)
     const projectName = pathToFolderName(originalPath)
 
-    // Step 2: folderNameToPath (what extension calls) - extension.ts line 470
-    const folderPath = await folderNameToPath(projectName)
+    // Slugs cannot reverse literal hyphens/dots. Use registered metadata, as
+    // folderNameToPath does, rather than assuming the host HOME is reversible.
+    const resolved = await resolvePathFromClaudeConfig(projectName, {
+      readFile: async () => JSON.stringify({ projects: { [originalPath]: {} } }),
+    })
+    expect(resolved).toBe(originalPath)
+    const folderPath = toRelativePath(resolved!, homeDir)
 
     // Step 3: Use expandHomePath instead of simple replace
     const cwd = expandHomePath(folderPath, homeDir)

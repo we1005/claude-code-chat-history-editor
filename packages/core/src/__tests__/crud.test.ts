@@ -484,7 +484,7 @@ describe('updateMessageContent', () => {
     expect(updated[0]).toEqual(toolUseMsg)
   })
 
-  it('should append text block when message has no text content and no tool_use block', async () => {
+  it('does not implicitly add a text block to an image-only message', async () => {
     const sessionId = 'test-session'
     await writeMessages(sessionId, [
       {
@@ -502,15 +502,14 @@ describe('updateMessageContent', () => {
       updateMessageContent(projectName, sessionId, 'asst-2', 'New text')
     )
 
-    expect(result.success).toBe(true)
+    expect(result.success).toBe(false)
     const updated = await Effect.runPromise(readSession(projectName, sessionId))
     const content = updated[0].message?.content as Array<Record<string, unknown>>
-    expect(content).toHaveLength(2)
+    expect(content).toHaveLength(1)
     expect(content[0]).toEqual({ type: 'image', source: { type: 'base64', data: 'x' } })
-    expect(content[1]).toEqual({ type: 'text', text: 'New text' })
   })
 
-  it('should normalize string content to array on update', async () => {
+  it('preserves string content representation on update', async () => {
     const sessionId = 'test-session'
     await writeMessages(sessionId, [
       {
@@ -527,7 +526,7 @@ describe('updateMessageContent', () => {
 
     expect(result.success).toBe(true)
     const updated = await Effect.runPromise(readSession(projectName, sessionId))
-    expect(updated[0].message?.content).toEqual([{ type: 'text', text: 'Updated' }])
+    expect(updated[0].message?.content).toBe('Updated')
   })
 
   it('should accept human-type messages', async () => {

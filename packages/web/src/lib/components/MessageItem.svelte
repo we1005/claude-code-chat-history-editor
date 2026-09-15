@@ -17,6 +17,7 @@
   import ExpandableContent from './ExpandableContent.svelte'
   import TodoItem from './TodoItem.svelte'
   import TooltipButton from './TooltipButton.svelte'
+  import MessageBlocks from './MessageBlocks.svelte'
 
   interface Props {
     msg: Message
@@ -197,7 +198,36 @@
   </TooltipButton>
 {/snippet}
 
-{#if isQueueOperation}
+{#if (isHuman || isAssistant) && caps.canEdit}
+  <div data-msg-id={msgId} class="p-4 rounded-lg group relative {messageClass} flex flex-col gap-2">
+    <div class="flex flex-wrap justify-between items-center gap-2 text-xs text-gh-text-secondary">
+      <span class="font-semibold">{isHuman ? '用户' : 'Agent'} · {formatDate(msg.timestamp)}</span>
+      <div class="flex items-center gap-2">
+        {#if onEdit}<button
+            class="rounded border border-gh-accent/30 px-2 py-1 text-gh-accent hover:bg-gh-accent/10"
+            title="Edit message content"
+            aria-label="编辑消息"
+            onclick={() => onEdit(msg)}>📝 编辑消息</button
+          >{/if}
+        {@render splitButton()}
+        {@render deleteButton()}
+      </div>
+    </div>
+    <MessageBlocks
+      content={(msg.message as { content?: unknown } | undefined)?.content ?? msg.content}
+    />
+    <details class="text-xs text-gh-text-secondary">
+      <summary class="cursor-pointer py-1"
+        >原始记录 · <code class="select-all break-all">{messageId}</code></summary
+      >
+      <pre class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(
+          msg,
+          null,
+          2
+        )}</pre>
+    </details>
+  </div>
+{:else if isQueueOperation}
   <!-- Queue operations are internal system messages, don't render -->
 {:else if progressData}
   <!-- Progress message (hook_progress etc.) -->

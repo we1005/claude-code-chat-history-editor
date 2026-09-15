@@ -1,9 +1,12 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, devices } from '@playwright/test'
+import { mkdirSync } from 'node:fs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const fixturesDir = path.resolve(__dirname, '../test-fixtures/sessions')
+const isolatedHome = path.resolve(__dirname, '../../.editor-test/upstream-home')
+mkdirSync(isolatedHome, { recursive: true })
 
 // Overridable so e2e can run beside an unrelated dev server already holding
 // the default port (reuseExistingServer would otherwise attach to it and read
@@ -32,10 +35,12 @@ export default defineConfig({
   webServer: {
     command: `pnpm dev --port ${port}`,
     env: {
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
       CLAUDE_SESSIONS_DIR: fixturesDir,
     },
     url: `http://localhost:${port}`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 30000,
   },
 })

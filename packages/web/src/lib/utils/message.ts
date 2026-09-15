@@ -110,6 +110,21 @@ const BASE_CAPABILITIES: Capabilities = {
 
 const EDITABLE_MESSAGE_TYPES = new Set(['user', 'human', 'assistant'])
 
+const hasEditableText = (value: unknown): boolean => {
+  if (typeof value === 'string') return true
+  if (Array.isArray(value)) return value.some(hasEditableText)
+  if (!value || typeof value !== 'object') return false
+  const block = value as Record<string, unknown>
+  if (block.type === 'text') return typeof block.text === 'string'
+  if (block.type === 'thinking') return typeof block.thinking === 'string'
+  if (block.type === 'tool_result')
+    return (
+      typeof block.content === 'string' ||
+      (Array.isArray(block.content) && block.content.some(hasEditableText))
+    )
+  return false
+}
+
 /**
  * Compute the capability set for a message from its content shape.
  *
@@ -117,37 +132,36 @@ const EDITABLE_MESSAGE_TYPES = new Set(['user', 'human', 'assistant'])
  * - `text`: edit/copy/export
  * - `tool_result`: edit/copy/export/convert/extract
  * - `thinking`: edit/copy/export/convert
- * - `tool_use`: copy only (editing would break tool_use <-> tool_result pairing)
+ * - `tool_use` alone: copy only; sibling text fields can be edited precisely
  * - unknown types: delete only
  *
- * Pairing invariant: a sibling `tool_use` block anywhere in the content blocks
- * the mutating capabilities (edit/convert) in EVERY branch — matching
- * getMessageCategory, which classifies any tool_use-bearing message as
- * `tool_use` regardless of block order (e.g. `[thinking, tool_use]`).
+ * The field editor never modifies tool-use structures. Whole-content conversion
+ * remains disabled when a tool_use sibling is present.
  */
 export const getCapabilities = (msg: Message): Capabilities => {
   if (!EDITABLE_MESSAGE_TYPES.has(msg.type)) return { ...BASE_CAPABILITIES }
 
   const m = msg.message as { content?: Content } | undefined
-  if (!m?.content) return { ...BASE_CAPABILITIES }
+  const content = m?.content ?? msg.content
+  if (content === null || content === undefined) return { ...BASE_CAPABILITIES }
 
-  const items = normalizeContent(m.content)
+  const items = normalizeContent(content)
   const primary = items[0]?.type
   const hasToolUse = items.some((c) => c?.type === 'tool_use')
-  const editable = !!msg.uuid
+  const editable = !!msg.uuid && hasEditableText(content)
 
   switch (primary) {
     case 'text':
       return {
         ...BASE_CAPABILITIES,
-        canEdit: editable && !hasToolUse,
+        canEdit: editable,
         canCopy: true,
         canExport: true,
       }
     case 'tool_result':
       return {
         ...BASE_CAPABILITIES,
-        canEdit: editable && !hasToolUse,
+        canEdit: editable,
         canCopy: true,
         canExport: true,
         canConvert: !hasToolUse,
@@ -156,15 +170,15 @@ export const getCapabilities = (msg: Message): Capabilities => {
     case 'thinking':
       return {
         ...BASE_CAPABILITIES,
-        canEdit: editable && !hasToolUse,
+        canEdit: editable,
         canCopy: true,
         canExport: true,
         canConvert: !hasToolUse,
       }
     case 'tool_use':
-      return { ...BASE_CAPABILITIES, canCopy: true }
+      return { ...BASE_CAPABILITIES, canEdit: editable, canCopy: true }
     default:
-      return { ...BASE_CAPABILITIES }
+      return { ...BASE_CAPABILITIES, canEdit: editable }
   }
 }
 
@@ -186,6 +200,9 @@ export const DEFAULT_VISIBLE_CATEGORIES: MessageCategory[] = [
   'assistant',
   'metadata',
   'summary',
+  'thinking',
+  'tool_result',
+  'tool_use',
   'user',
 ]
 

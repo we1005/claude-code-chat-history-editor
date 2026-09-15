@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="290" viewBox="0 0 1200 290" role="img" aria-labelledby="title desc">
+  <title id="title">Claude Code Chat History Editor</title>
+  <desc id="desc">Precise edits. Preserved history. Local backups.</desc>
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#211d1b"/><stop offset="1" stop-color="#473229"/></linearGradient><linearGradient id="accent"><stop stop-color="#f0b395"/><stop offset="1" stop-color="#d98964"/></linearGradient></defs>
+  <rect width="1200" height="290" rx="24" fill="url(#bg)"/>
+  <circle cx="1080" cy="120" r="185" fill="#efb095" opacity=".045"/>
+  <circle cx="1080" cy="120" r="130" fill="none" stroke="#efb095" stroke-opacity=".12"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif">
+    <rect x="48" y="34" width="280" height="27" rx="13" fill="#efb095" fill-opacity=".12"/>
+    <text x="65" y="52" fill="#f1c6b1" font-size="12" font-weight="600" letter-spacing="1.7">LOCAL-FIRST · UNOFFICIAL · MIT</text>
+    <text x="48" y="128" fill="#fff7f1" font-size="41" font-weight="700" letter-spacing="-1">Claude Code Chat History Editor</text>
+    <text x="50" y="171" fill="#d8c2b6" font-size="21">Precise edits. Preserved history. Local backups.</text>
+    <g fill="#f3dace" font-size="13"><rect x="50" y="205" width="128" height="34" rx="8" fill="#ffffff" fill-opacity=".07"/><text x="71" y="227">Content blocks</text><rect x="188" y="205" width="124" height="34" rx="8" fill="#ffffff" fill-opacity=".07"/><text x="210" y="227">Revision checks</text><rect x="322" y="205" width="114" height="34" rx="8" fill="#ffffff" fill-opacity=".07"/><text x="344" y="227">Field restore</text></g>
+  </g>
+  <g transform="translate(969 67)"><rect width="157" height="157" rx="25" fill="url(#accent)"/><path d="M35 40h76M35 62h55M35 84h32" fill="none" stroke="#4c3024" stroke-width="7" stroke-linecap="round"/><path d="m70 118 6-21 33-33 16 16-33 33-22 5zm31-46 16 16" fill="none" stroke="#4c3024" stroke-width="5" stroke-linejoin="round"/></g>
+</svg>

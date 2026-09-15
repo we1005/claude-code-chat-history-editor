@@ -180,3 +180,4 @@ jobs:
           else
             echo "⚠️ OVSX_PAT not set, skipping Open VSX publish"
           fi
+# Historical upstream workflow, not enabled for this fork.

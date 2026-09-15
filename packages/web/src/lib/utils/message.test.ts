@@ -177,10 +177,10 @@ describe('DEFAULT_VISIBLE_CATEGORIES', () => {
     expect(DEFAULT_VISIBLE_CATEGORIES).toContain('metadata')
   })
 
-  it('should not include thinking or tool types by default', () => {
-    expect(DEFAULT_VISIBLE_CATEGORIES).not.toContain('thinking')
-    expect(DEFAULT_VISIBLE_CATEGORIES).not.toContain('tool_use')
-    expect(DEFAULT_VISIBLE_CATEGORIES).not.toContain('tool_result')
+  it('includes thinking and tool messages in the editor timeline by default', () => {
+    expect(DEFAULT_VISIBLE_CATEGORIES).toContain('thinking')
+    expect(DEFAULT_VISIBLE_CATEGORIES).toContain('tool_use')
+    expect(DEFAULT_VISIBLE_CATEGORIES).toContain('tool_result')
   })
 })
 
@@ -472,7 +472,7 @@ describe('getCapabilities', () => {
     expect(caps.canDelete).toBe(true)
   })
 
-  it('should block edit when assistant text is paired with tool_use (pairing invariant)', () => {
+  it('allows scoped text edits alongside untouched tool_use blocks', () => {
     const msg = makeMsg({
       type: 'assistant',
       message: {
@@ -483,7 +483,7 @@ describe('getCapabilities', () => {
       },
     })
     const caps = getCapabilities(msg)
-    expect(caps.canEdit).toBe(false)
+    expect(caps.canEdit).toBe(true)
     expect(caps.canDelete).toBe(true)
   })
 
@@ -572,7 +572,7 @@ describe('getCapabilities', () => {
     expect(getCapabilities(msg).canEdit).toBe(true)
   })
 
-  it('should block edit/convert when thinking is paired with tool_use (pairing invariant)', () => {
+  it('allows scoped thinking edits but blocks whole-content conversion with tool_use', () => {
     const msg = makeMsg({
       type: 'assistant',
       message: {
@@ -583,12 +583,12 @@ describe('getCapabilities', () => {
       },
     })
     const caps = getCapabilities(msg)
-    expect(caps.canEdit).toBe(false)
+    expect(caps.canEdit).toBe(true)
     expect(caps.canConvert).toBe(false)
     expect(caps.canDelete).toBe(true)
   })
 
-  it('should block edit when thinking+text is paired with tool_use', () => {
+  it('allows selecting text and thinking fields without modifying tool_use', () => {
     const msg = makeMsg({
       type: 'assistant',
       message: {
@@ -599,7 +599,7 @@ describe('getCapabilities', () => {
         ],
       },
     })
-    expect(getCapabilities(msg).canEdit).toBe(false)
+    expect(getCapabilities(msg).canEdit).toBe(true)
   })
 
   it('should keep delete-only when message content is absent', () => {
