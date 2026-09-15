@@ -34,7 +34,7 @@ jobs:
       - run: pnpm build:web
       - run: pnpm --filter @claude-sessions/web exec playwright install chromium --with-deps
       - run: pnpm test:editor
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: isolated-editor-test-results
