@@ -163,6 +163,8 @@ If Google Chrome is already installed, use `PLAYWRIGHT_CHANNEL=chrome pnpm test:
 
 See [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md) and the [implementation notes (Chinese)](改造与验证说明.md).
 
+The [research archive (Chinese)](其它参考项目调研文档/README.md) contains the initial source-code investigations, project comparisons and selection rationale. These documents preserve findings from the research stage; this README describes the current application.
+
 ## Credits and license
 
 Based on upstream commit [39f3c7d](https://github.com/es6kr/claude-code-sessions/tree/39f3c7dea78acd38e7127563217d8a332b64bb5d), retaining its copyright notice under the [MIT License](LICENSE). Precise JSON string locations use Microsoft's [jsonc-parser](https://github.com/microsoft/node-jsonc-parser).

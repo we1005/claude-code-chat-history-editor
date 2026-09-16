@@ -173,6 +173,8 @@ pnpm test:editor
 
 协作规则见 [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md)。详细改造记录见 [改造与验证说明](改造与验证说明.md)。
 
+前期源码调研、候选项目比较与选型依据见 [其它参考项目调研文档](其它参考项目调研文档/README.md)。这些文档保留调研时的结论，当前功能以本 README 为准。
+
 ## 致谢与许可证
 
 基于 [es6kr/claude-code-sessions](https://github.com/es6kr/claude-code-sessions/tree/39f3c7dea78acd38e7127563217d8a332b64bb5d) 的 `39f3c7d` 快照改造，保留原始版权声明，使用 [MIT License](LICENSE)。JSON 字符串定位使用微软的 [jsonc-parser](https://github.com/microsoft/node-jsonc-parser)。
