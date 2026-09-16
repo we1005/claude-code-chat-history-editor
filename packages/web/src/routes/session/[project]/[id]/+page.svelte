@@ -82,7 +82,7 @@
   const displayTitle = $derived(customTitle || session?.title || 'Untitled')
 
   // Back URL
-  const backUrl = $derived(`/#project=${encodeURIComponent(projectName)}`)
+  const backUrl = $derived(`/#${new URLSearchParams({ project: projectName, session: sessionId })}`)
 
   // Load session data
   const loadSession = async () => {
@@ -282,7 +282,7 @@
         closeConfirm()
         try {
           await api.deleteSession(session!.projectName, session!.id)
-          goto(backUrl)
+          goto(`/#project=${encodeURIComponent(projectName)}`)
         } catch (e) {
           error = String(e)
         }
@@ -298,7 +298,7 @@
   <title>{displayTitle} - Claude History Editor</title>
 </svelte:head>
 
-<div class="h-screen bg-gh-bg">
+<div class="h-full min-h-0 bg-gh-bg">
   {#if loading}
     <div class="flex items-center justify-center h-full">
       <div class="text-gh-muted">Loading...</div>

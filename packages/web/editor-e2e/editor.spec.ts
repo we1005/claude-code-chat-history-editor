@@ -86,7 +86,9 @@ test.afterEach(() => {
 async function openEditor(page: Page, uuid = 'a1') {
   const response = await page.goto(`/session/${project}/${session}`)
   expect(response?.status()).toBe(200)
+  await page.getByLabel('筛选消息类型', { exact: true }).click()
   await page.getByRole('button', { name: 'All', exact: true }).first().click()
+  await page.getByLabel('筛选消息类型', { exact: true }).click()
   const message = page.locator(`[data-msg-id="${uuid}"]`)
   await expect(message).toBeVisible()
   await message.hover()
@@ -105,6 +107,8 @@ test('edits a selected assistant block and restores it without removing later hi
   await dialog.locator('[data-field-id="/message/content/3/text"]').click()
   await expect(dialog.getByTestId('field-text')).toHaveValue('SECOND_TEXT')
   await dialog.getByTestId('field-text').fill('Revised second block\n保留其他内容')
+  if (process.env.UPDATE_EDITOR_SCREENSHOTS === '1')
+    await page.screenshot({ path: path.resolve('../../docs/history-editor.png') })
   await dialog.getByTestId('save-field').click()
   await expect(dialog.getByTestId('editor-success')).toContainText('已保存当前字段')
   const edited = original.replace(
@@ -195,4 +199,236 @@ test('supports the editor on a narrow viewport', async ({ page }) => {
   await dialog.getByTestId('field-text').fill('Mobile edit')
   await dialog.getByTestId('save-field').click()
   await expect(dialog.getByTestId('editor-success')).toContainText('已保存')
+})
+
+test('wide workspace uses the viewport, supports sidebar collapse and browser history', async ({
+  page,
+}) => {
+  const alternate = randomUUID()
+  await fs.writeFile(
+    path.join(path.dirname(file), `${alternate}.jsonl`),
+    original
+      .replaceAll(session, alternate)
+      .replace('Original user message', 'ALTERNATE_SESSION_TITLE')
+  )
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(`/#${new URLSearchParams({ project, session })}`)
+  await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', session)
+  const sidebar = await page.locator('[data-project-sidebar]').boundingBox()
+  const content = await page.locator('[data-workspace-content]').boundingBox()
+  expect(sidebar!.x).toBe(0)
+  expect(sidebar!.width).toBeGreaterThanOrEqual(280)
+  expect(sidebar!.width).toBeLessThanOrEqual(340)
+  expect(content!.x + content!.width).toBe(1920)
+  if (process.env.UPDATE_EDITOR_SCREENSHOTS === '1')
+    await page.screenshot({ path: path.resolve('../../docs/workspace.png') })
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <= innerWidth &&
+        document.documentElement.scrollHeight <= innerHeight
+    )
+  ).toBe(true)
+  await page.getByRole('button', { name: '收起项目侧栏', exact: true }).click()
+  await expect(page.locator('[data-project-sidebar]')).not.toBeVisible()
+  expect((await page.locator('[data-workspace-content]').boundingBox())!.x).toBe(0)
+  await page.getByRole('button', { name: '打开项目侧栏', exact: true }).click()
+  await page.locator(`[data-session-select="${alternate}"]`).click()
+  await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', alternate)
+  await page.goBack()
+  await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', session)
+  await page.goForward()
+  await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', alternate)
+  const icon = await page.locator('link[rel=icon]').getAttribute('href')
+  expect(icon).toContain('/favicon.svg')
+  expect(icon).not.toContain('data:')
+})
+
+test('mobile project drawer opens and closes without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/#${new URLSearchParams({ project, session })}`)
+  await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', session)
+  await expect(page.locator('[data-project-sidebar]')).not.toBeVisible()
+  await page.getByRole('button', { name: '打开项目侧栏', exact: true }).click()
+  await expect(page.locator('[data-project-sidebar]')).toBeVisible()
+  await page.locator(`[data-session-select="${session}"]`).click()
+  await expect(page.locator('[data-project-sidebar]')).not.toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test('late session responses cannot replace a newer selection', async ({ page }) => {
+  const alternate = randomUUID()
+  await fs.writeFile(
+    path.join(path.dirname(file), `${alternate}.jsonl`),
+    original
+      .replaceAll(session, alternate)
+      .replace('Original user message', 'NEWER_SELECTION_CONTENT')
+  )
+  await page.goto(`/#${new URLSearchParams({ project })}`)
+  await expect(page.locator(`[data-session-select="${session}"]`)).toBeVisible()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route(
+    (url) => url.pathname === '/api/session' && url.search.includes(session),
+    async (route) => {
+      await gate
+      await route.continue()
+    }
+  )
+  try {
+    const oldRequest = page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname === '/api/session' && request.url().includes(session)
+    )
+    await page.locator(`[data-session-select="${session}"]`).click()
+    await oldRequest
+    await page.locator(`[data-session-select="${alternate}"]`).click()
+    await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', alternate)
+    await expect(page.locator('[data-msg-id="u1"]')).toContainText('NEWER_SELECTION_CONTENT')
+    const oldResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/session' && response.url().includes(session)
+    )
+    release()
+    await oldResponse
+    await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', alternate)
+    await expect(page.locator('[data-msg-id="u1"]')).toContainText('NEWER_SELECTION_CONTENT')
+  } finally {
+    release()
+  }
+})
+
+test('keyboard search waits for explicit selection and keeps workspace context', async ({
+  page,
+}) => {
+  await page.goto(`/#${new URLSearchParams({ project })}`)
+  await expect(page.locator(`[data-session-select="${session}"]`)).toBeVisible()
+  const search = page.getByRole('textbox', { name: '搜索会话或 ID', exact: true })
+  await page.keyboard.press('ControlOrMeta+k')
+  await expect(search).toBeFocused()
+  await search.fill(session)
+  await expect(page.locator('[data-search-result]')).toHaveCount(1)
+  expect(page.url()).not.toContain(`session=${session}`)
+  await search.press('ArrowDown')
+  await expect(page.locator('[data-search-result]').first()).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('[data-session-id]')).toHaveAttribute('data-session-id', session)
+  await expect(page.locator('[data-project-sidebar]')).toBeVisible()
+  await search.fill('no_session_matches_this_query_987654')
+  await expect(
+    page.getByText('没有匹配的会话，可尝试搜索消息内容。', { exact: true })
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: '搜索消息内容', exact: true })).toBeVisible()
+})
+
+test('session search reveals collapsed tool input in its full conversation context', async ({
+  page,
+}) => {
+  await page.goto(`/session/${project}/${session}`)
+  await expect(page.locator('[data-msg-id="a1"]')).toBeVisible()
+  await page.getByRole('button', { name: '搜索当前会话', exact: true }).click()
+  const input = page.getByRole('textbox', { name: '搜索当前会话记录', exact: true })
+  await input.fill('theme.ts')
+  const result = page.locator('[data-search-hit]')
+  await expect(result).toHaveCount(1)
+  await expect(result).toContainText('工具输入')
+  await result.click()
+  await expect(page.locator('[data-search-context]')).toContainText('完整消息流')
+  for (const uuid of ['u1', 'a1', 'u2'])
+    await expect(page.locator(`[data-msg-id="${uuid}"]`)).toHaveCount(1)
+  const active = page.locator('[data-search-active]')
+  const match = active.locator('[data-search-path="/message/content/2/input"] mark')
+  await expect(match).toHaveText('theme.ts')
+  await expect(match).toBeVisible()
+  await expect
+    .poll(async () =>
+      match.evaluate((element) => {
+        const container = element.closest('[data-session-scroll]')!.getBoundingClientRect()
+        const bounds = element.getBoundingClientRect()
+        return bounds.top >= container.top && bounds.bottom <= container.bottom
+      })
+    )
+    .toBe(true)
+  await page.getByRole('button', { name: '返回搜索结果', exact: true }).click()
+  await expect(input).toHaveValue('theme.ts')
+  await expect(page.locator('[data-search-hit]')).toHaveCount(1)
+  await expect(page.locator('[data-msg-id="u1"]')).toHaveCount(0)
+  expect(await fs.readFile(file, 'utf8')).toBe(original)
+})
+
+test('session search finds compact summaries and opt-in hidden metadata records', async ({
+  page,
+}) => {
+  const extra =
+    [
+      {
+        type: 'system',
+        uuid: 'compact-boundary',
+        subtype: 'compact_boundary',
+        parentUuid: 'u2',
+        metadata: { marker: 'BOUNDARY_META_ANCHOR' },
+      },
+      {
+        type: 'user',
+        uuid: 'compact-summary',
+        parentUuid: 'compact-boundary',
+        isCompactSummary: true,
+        message: { content: 'COMPACT_SUMMARY_ANCHOR retained context' },
+      },
+      { type: 'queue-operation', operation: 'enqueue', content: 'ANONYMOUS_RECORD_ANCHOR' },
+    ]
+      .map((record) => JSON.stringify(record))
+      .join('\n') + '\n'
+  await fs.appendFile(file, extra)
+  await page.goto(`/session/${project}/${session}`)
+  await expect(page.locator('[data-msg-id="u1"]')).toBeVisible()
+  await page.keyboard.press('ControlOrMeta+f')
+  const input = page.getByRole('textbox', { name: '搜索当前会话记录', exact: true })
+  await expect(input).toBeFocused()
+  await input.fill('COMPACT_SUMMARY_ANCHOR')
+  await expect(page.locator('[data-search-hit]')).toHaveCount(1)
+  await expect(page.locator('[data-search-hit]')).toContainText('Compact 压缩总结')
+  await page.locator('[data-search-hit]').click()
+  await expect(page.locator('[data-search-active]')).toContainText('COMPACT_SUMMARY_ANCHOR')
+  await input.fill('BOUNDARY_META_ANCHOR')
+  await expect(page.getByText('当前会话没有匹配的消息', { exact: true })).toBeVisible()
+  await page.getByRole('checkbox', { name: '包含元数据', exact: true }).check()
+  await expect(page.locator('[data-search-hit]')).toHaveCount(1)
+  await page.locator('[data-search-hit]').click()
+  await expect(page.locator('[data-search-active] [data-search-fallback]')).toContainText(
+    'BOUNDARY_META_ANCHOR'
+  )
+  await expect(page.locator('[data-search-active] mark')).toBeVisible()
+  await input.fill('ANONYMOUS_RECORD_ANCHOR')
+  await expect(page.locator('[data-search-hit]')).toHaveCount(1)
+  await page.locator('[data-search-hit]').click()
+  await expect(page.locator('[data-search-active] [data-search-fallback]')).toContainText(
+    'ANONYMOUS_RECORD_ANCHOR'
+  )
+  await expect(page.locator('[data-search-active] mark').first()).toBeVisible()
+  expect(await fs.readFile(file, 'utf8')).toBe(original + extra)
+})
+
+test('session search moves between message hits and Escape restores the normal stream', async ({
+  page,
+}) => {
+  await page.goto(`/session/${project}/${session}`)
+  await expect(page.locator('[data-msg-id="u1"]')).toBeVisible()
+  await page.getByRole('button', { name: '搜索当前会话', exact: true }).click()
+  const input = page.getByRole('textbox', { name: '搜索当前会话记录', exact: true })
+  await input.fill('message')
+  await expect(page.locator('[data-search-hit]')).toHaveCount(2)
+  await input.press('Enter')
+  await expect(page.locator('[data-search-active] [data-msg-id="u1"]')).toBeVisible()
+  await page.getByRole('button', { name: '下一条匹配消息', exact: true }).click()
+  await expect(page.locator('[data-search-active] [data-msg-id="u2"]')).toBeVisible()
+  await page.getByRole('button', { name: '上一条匹配消息', exact: true }).click()
+  await expect(page.locator('[data-search-active] [data-msg-id="u1"]')).toBeVisible()
+  await input.press('Escape')
+  await expect(page.locator('[data-session-find]')).toHaveCount(0)
+  await expect(page.locator('[data-search-active]')).toHaveCount(0)
+  for (const uuid of ['u1', 'a1', 'u2'])
+    await expect(page.locator(`[data-msg-id="${uuid}"]`)).toHaveCount(1)
 })

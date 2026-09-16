@@ -1,87 +1,146 @@
 <script lang="ts">
-  import TooltipButton from './TooltipButton.svelte'
-
-  interface Props {
-    onResumeSession?: () => void
-    onCompressSession?: () => void
-    onRenameSession?: () => void
-    onDeleteSession?: () => void
+  import Icon from './Icon.svelte'
+  let {
+    onResumeSession,
+    onCompressSession,
+    onRenameSession,
+    onDeleteSession,
+    compact = false,
+  }: {
+    onResumeSession?: (event: MouseEvent) => void
+    onCompressSession?: (event: MouseEvent) => void
+    onRenameSession?: (event: MouseEvent) => void
+    onDeleteSession?: (event: MouseEvent) => void
+    compact?: boolean
+  } = $props()
+  let open = $state(false)
+  let container: HTMLDivElement | undefined = $state()
+  let trigger: HTMLButtonElement | undefined = $state()
+  let position = $state('')
+  function toggle() {
+    if (!open && trigger) {
+      const rect = trigger.getBoundingClientRect()
+      position = `left:${Math.max(8, Math.min(innerWidth - 198, rect.right - 190))}px;top:${Math.max(8, Math.min(rect.bottom + 6, innerHeight - 190))}px`
+    }
+    open = !open
   }
-
-  let { onResumeSession, onCompressSession, onRenameSession, onDeleteSession }: Props = $props()
+  $effect(() => {
+    if (!open) return
+    const outside = (event: PointerEvent) => {
+      if (!container?.contains(event.target as Node)) open = false
+    }
+    document.addEventListener('pointerdown', outside)
+    const dismiss = () => (open = false)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      window.removeEventListener('resize', dismiss)
+    }
+  })
+  function select(action: ((event: MouseEvent) => void) | undefined, event: MouseEvent) {
+    open = false
+    action?.(event)
+  }
+  function keys(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      open = false
+      trigger?.focus()
+      event.preventDefault()
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return
+    event.preventDefault()
+    if (!open) {
+      toggle()
+      requestAnimationFrame(() =>
+        container?.querySelector<HTMLButtonElement>('[role=menuitem]')?.focus()
+      )
+      return
+    }
+    const items = [...(container?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') || [])]
+    const index = items.indexOf(document.activeElement as HTMLButtonElement)
+    items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus()
+  }
 </script>
 
-{#if onResumeSession || onCompressSession || onRenameSession || onDeleteSession}
-  <div class="flex items-center gap-0.5">
-    {#if onResumeSession}
-      <TooltipButton
-        class="p-1.5 rounded text-gh-text-secondary hover:text-gh-green hover:bg-gh-green/10 text-sm transition-colors"
-        onclick={onResumeSession}
-        title="Resume session"
+<div class="flex items-center gap-1">
+  {#if onResumeSession && !compact}<button
+      class="quiet-button"
+      onclick={onResumeSession}
+      title="继续会话"
+      ><Icon name="play" size={16} /><span class="hidden lg:inline">继续会话</span></button
+    >{/if}
+  {#if onCompressSession || onRenameSession || onDeleteSession || (compact && onResumeSession)}
+    <div class="relative" bind:this={container} role="group">
+      <button
+        bind:this={trigger}
+        class="quiet-button"
+        aria-label="更多会话操作"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onkeydown={keys}
+        onclick={toggle}><Icon name="more" size={18} /></button
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-          />
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </svg>
-      </TooltipButton>
-    {/if}
-    {#if onCompressSession}
-      <TooltipButton
-        class="p-1.5 rounded text-gh-text-secondary hover:text-gh-accent hover:bg-gh-accent/10 text-sm transition-colors"
-        onclick={onCompressSession}
-        title="Compress session"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="1.5"
-            d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0-3-3m3 3 3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"
-          />
-        </svg>
-      </TooltipButton>
-    {/if}
-    {#if onRenameSession}
-      <TooltipButton
-        class="p-1.5 rounded text-gh-text-secondary hover:text-gh-accent hover:bg-gh-accent/10 text-sm transition-colors"
-        onclick={onRenameSession}
-        title="Rename session"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-          />
-        </svg>
-      </TooltipButton>
-    {/if}
-    {#if onDeleteSession}
-      <TooltipButton
-        class="p-1.5 rounded text-gh-text-secondary hover:text-gh-red hover:bg-gh-red/10 text-sm transition-colors"
-        onclick={onDeleteSession}
-        title="Delete session"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-          />
-        </svg>
-      </TooltipButton>
-    {/if}
-  </div>
-{/if}
+      {#if open}
+        <div class="session-action-menu" role="menu" aria-label="会话操作" style={position}>
+          {#if compact && onResumeSession}<button
+              role="menuitem"
+              onkeydown={keys}
+              onclick={(event) => select(onResumeSession, event)}
+              ><Icon name="play" size={16} />继续会话</button
+            >{/if}
+          {#if onRenameSession}<button
+              role="menuitem"
+              onkeydown={keys}
+              onclick={(event) => select(onRenameSession, event)}
+              ><Icon name="edit" size={16} />重命名会话</button
+            >{/if}
+          {#if onCompressSession}<button
+              role="menuitem"
+              onkeydown={keys}
+              onclick={(event) => select(onCompressSession, event)}
+              ><Icon name="archive" size={16} />清理冗余记录</button
+            >{/if}
+          {#if onDeleteSession}<button
+              role="menuitem"
+              onkeydown={keys}
+              class="delete-action"
+              onclick={(event) => select(onDeleteSession, event)}
+              ><Icon name="trash" size={16} />删除会话</button
+            >{/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .session-action-menu {
+    position: fixed;
+    width: 190px;
+    padding: 5px;
+    background: var(--color-gh-bg);
+    border: 1px solid var(--color-gh-border);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px #14233b18;
+    z-index: 40;
+  }
+  .session-action-menu button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    text-align: left;
+  }
+  .session-action-menu button:hover {
+    background: var(--color-gh-bg-secondary);
+  }
+  .delete-action {
+    color: var(--color-gh-red);
+    border-top: 1px solid var(--color-gh-border);
+    margin-top: 3px;
+  }
+</style>

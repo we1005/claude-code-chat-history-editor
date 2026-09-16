@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { browser } from '$app/environment'
+  import { afterNavigate } from '$app/navigation'
   import * as api from '$lib/api'
   import type { Project, SessionMeta, SessionData, Message, TodoItem, AgentInfo } from '$lib/api'
   import { ConfirmModal, InputModal, ProjectTree, SessionViewer, Toast } from '$lib/components'
   import { getDisplayTitle } from '$lib/utils'
   import { appConfig, viewMode, expandedGroups } from '$lib/stores/config'
+  import { sidebarOpen, closeMobileSidebar } from '$lib/stores/workspace'
   import { deleteMessageWithChainRepair } from '@claude-sessions/core'
   import type {
     SessionSortField,
@@ -24,6 +26,10 @@
   let todos = $state<TodoItem[]>([])
   let agents = $state<AgentInfo[]>([])
   let loading = $state(false)
+  let sessionLoading = $state(false)
+  let sessionLoadError = $state('')
+  let selectionRequest = 0
+  let restoreRequest = 0
   let loadingProject = $state<string | null>(null)
   let error = $state<string | null>(null)
   let toast = $state<string | null>(null)
@@ -99,13 +105,16 @@
     }
   }
 
-  const updateHash = (project?: string, session?: string) => {
+  const updateHash = (project?: string, session?: string, replace = true) => {
     if (!browser) return
     const params = new URLSearchParams()
     if (project) params.set('project', project)
     if (session) params.set('session', session)
     const hash = params.toString()
-    window.history.replaceState(null, '', hash ? `#${hash}` : window.location.pathname)
+    const next = hash ? `#${hash}` : window.location.pathname
+    if (window.location.hash === `#${hash}`) return
+    if (replace) window.history.replaceState(null, '', next)
+    else window.history.pushState(null, '', next)
   }
 
   // Data loading
@@ -160,10 +169,33 @@
   }
 
   const restoreFromHash = async () => {
+    const hash = window.location.hash
+    const request = ++restoreRequest
     const { project, session } = parseHash()
+    if (session && selectedSession?.id === session && selectedSession.projectName === project)
+      return
+    if (session !== selectedSession?.id || project !== selectedSession?.projectName) {
+      ++selectionRequest
+      selectedSession = null
+      messages = []
+      todos = []
+      agents = []
+      sessionLoading = !!session
+    }
+    if (!project || !session) {
+      ++selectionRequest
+      selectedSession = null
+      messages = []
+      todos = []
+      agents = []
+      sessionLoading = false
+      loading = false
+      sessionLoadError = ''
+    }
     if (!project) return
 
     await loadSessions(project)
+    if (request !== restoreRequest || window.location.hash !== hash) return
     expandedProjects.add(project)
     expandedProjects = new Set(expandedProjects)
 
@@ -171,6 +203,14 @@
       const sessions = projectSessions.get(project)
       const found = sessions?.find((s) => s.id === session)
       if (found) await selectSession(found, false)
+      else {
+        ++selectionRequest
+        selectedSession = null
+        messages = []
+        sessionLoading = false
+        loading = false
+        error = '当前项目中找不到该会话，可能已删除或链接不匹配。'
+      }
     }
   }
 
@@ -198,21 +238,30 @@
     if (expandedProjects.has(name)) {
       expandedProjects.delete(name)
       expandedProjects = new Set(expandedProjects)
-      if (selectedSession?.projectName === name) updateHash()
     } else {
       await loadSessions(name)
       expandedProjects.add(name)
       expandedProjects = new Set(expandedProjects)
-      updateHash(name, selectedSession?.projectName === name ? selectedSession.id : undefined)
+      if (!selectedSession) updateHash(name)
     }
   }
 
   const selectSession = async (session: SessionMeta, shouldUpdateHash = true) => {
+    if (shouldUpdateHash) ++restoreRequest
+    const request = ++selectionRequest
     selectedSession = session
+    messages = []
+    todos = []
+    agents = []
+    sessionLoading = true
+    sessionLoadError = ''
+    closeMobileSidebar()
+    if (shouldUpdateHash) updateHash(session.projectName, session.id, false)
     loading = true
     error = null
     try {
-      messages = await api.getSession(session.projectName, session.id)
+      const loadedMessages = await api.getSession(session.projectName, session.id)
+      if (request !== selectionRequest || selectedSession?.id !== session.id) return
 
       // Load todos and agents from cached session data or fetch fresh
       const sessionData = projectSessionData.get(session.projectName)?.get(session.id)
@@ -225,22 +274,29 @@
       } else {
         // Fetch fresh data
         const treeData = await api.getSessionTreeData(session.projectName, session.id)
+        if (request !== selectionRequest || selectedSession?.id !== session.id) return
         const sessionTodos = treeData.todos?.sessionTodos ?? []
         const agentTodoItems = treeData.todos?.agentTodos?.flatMap((a) => a.todos) ?? []
         todos = [...sessionTodos, ...agentTodoItems]
         agents = treeData.agents ?? []
       }
 
-      if (shouldUpdateHash) updateHash(session.projectName, session.id)
+      messages = loadedMessages
     } catch (e) {
-      error = String(e)
+      if (request === selectionRequest) {
+        error = String(e)
+        sessionLoadError = '加载会话失败，请重新选择或刷新。'
+      }
     } finally {
-      loading = false
+      if (request === selectionRequest) {
+        loading = false
+        sessionLoading = false
+      }
     }
   }
 
-  const handleDeleteSession = (e: Event, session: SessionMeta) => {
-    e.stopPropagation()
+  const handleDeleteSession = (e: Event | null, session: SessionMeta) => {
+    e?.stopPropagation()
     showConfirm(
       'Delete Session',
       `Delete session "${session.title}"?`,
@@ -269,8 +325,8 @@
     )
   }
 
-  const handleRenameSession = (e: Event, session: SessionMeta) => {
-    e.stopPropagation()
+  const handleRenameSession = (e: Event | null, session: SessionMeta) => {
+    e?.stopPropagation()
     const sessionData = projectSessionData.get(session.projectName)?.get(session.id)
     const currentTitle = getDisplayTitle({
       customTitle: sessionData?.customTitle,
@@ -526,8 +582,8 @@
     )
   }
 
-  const handleResumeSession = async (e: Event, session: SessionMeta) => {
-    e.stopPropagation()
+  const handleResumeSession = async (e: Event | null, session: SessionMeta) => {
+    e?.stopPropagation()
 
     try {
       const result = await api.resumeSession(session.projectName, session.id)
@@ -541,8 +597,8 @@
     }
   }
 
-  const handleCompressSession = (e: Event, session: SessionMeta) => {
-    e.stopPropagation()
+  const handleCompressSession = (e: Event | null, session: SessionMeta) => {
+    e?.stopPropagation()
     showConfirm(
       'Compress Session',
       `Compress session "${session.title}"?\n\nThis will remove redundant data (progress messages and intermediate snapshots) to reduce file size. This action cannot be undone.`,
@@ -666,6 +722,9 @@
   }
 
   // Lifecycle
+  afterNavigate(() => {
+    if (projects.length) void restoreFromHash()
+  })
   onMount(() => {
     restoreSortOptions()
     loadProjects().then(() => restoreFromHash())
@@ -675,50 +734,83 @@
   })
 </script>
 
-<div class="grid grid-cols-[350px_1fr] gap-4 h-[calc(100vh-120px)]">
-  <ProjectTree
-    {projects}
-    {projectSessions}
-    {projectSessionData}
-    {expandedProjects}
-    {selectedSession}
-    {loadingProject}
-    {sortField}
-    {sortOrder}
-    {titleDisplayMode}
-    viewMode={$viewMode}
-    expandedGroups={$expandedGroups}
-    onToggleProject={toggleProject}
-    onToggleGroup={handleToggleGroup}
-    onViewModeChange={handleViewModeChange}
-    onSelectSession={selectSession}
-    onCompressSession={handleCompressSession}
-    onDeleteSession={handleDeleteSession}
-    onMoveSession={handleMoveSession}
-    onRenameSession={handleRenameSession}
-    onResumeSession={handleResumeSession}
-    onSortChange={handleSortChange}
-    onTitleModeChange={handleTitleModeChange}
-  />
-
-  <SessionViewer
-    session={selectedSession}
-    {messages}
-    {todos}
-    {agents}
-    customTitle={selectedSession
-      ? projectSessionData.get(selectedSession.projectName)?.get(selectedSession.id)?.customTitle
-      : undefined}
-    onMessagesChange={(newMessages) => (messages = newMessages)}
-    onRefresh={async () => {
-      if (selectedSession) {
-        messages = await api.getSession(selectedSession.projectName, selectedSession.id)
-      }
-    }}
-    onDeleteMessage={handleDeleteMessage}
-    onEditTitle={handleEditCustomTitle}
-    onSplitSession={handleSplitSession}
-  />
+<div class="workspace" data-workspace data-sidebar-open={$sidebarOpen}>
+  {#if $sidebarOpen}<button
+      class="sidebar-scrim"
+      aria-label="关闭项目侧栏"
+      onclick={() => sidebarOpen.set(false)}
+    ></button>{/if}
+  <div class="workspace-sidebar" data-project-sidebar>
+    <ProjectTree
+      {projects}
+      {projectSessions}
+      {projectSessionData}
+      {expandedProjects}
+      {selectedSession}
+      {loadingProject}
+      {sortField}
+      {sortOrder}
+      {titleDisplayMode}
+      viewMode={$viewMode}
+      expandedGroups={$expandedGroups}
+      onToggleProject={toggleProject}
+      onToggleGroup={handleToggleGroup}
+      onViewModeChange={handleViewModeChange}
+      onSelectSession={selectSession}
+      onCompressSession={handleCompressSession}
+      onDeleteSession={handleDeleteSession}
+      onMoveSession={handleMoveSession}
+      onRenameSession={handleRenameSession}
+      onResumeSession={handleResumeSession}
+      onSortChange={handleSortChange}
+      onTitleModeChange={handleTitleModeChange}
+    />
+  </div>
+  <div class="workspace-content" data-workspace-content>
+    {#key selectedSession?.id || 'no-session'}
+      <SessionViewer
+        fullWidth={true}
+        loading={sessionLoading}
+        loadError={sessionLoadError}
+        session={selectedSession}
+        {messages}
+        {todos}
+        {agents}
+        customTitle={selectedSession
+          ? projectSessionData.get(selectedSession.projectName)?.get(selectedSession.id)
+              ?.customTitle
+          : undefined}
+        onMessagesChange={(newMessages) => (messages = newMessages)}
+        onRefresh={async () => {
+          if (selectedSession) {
+            const current = selectedSession
+            const request = selectionRequest
+            const fresh = await api.getSession(current.projectName, current.id)
+            if (request === selectionRequest && selectedSession?.id === current.id) {
+              messages = fresh
+              sessionLoadError = ''
+              error = null
+            }
+          }
+        }}
+        onDeleteMessage={handleDeleteMessage}
+        onEditTitle={handleEditCustomTitle}
+        onSplitSession={handleSplitSession}
+        onResumeSession={() => {
+          if (selectedSession) void handleResumeSession(null, selectedSession)
+        }}
+        onRenameSession={() => {
+          if (selectedSession) handleRenameSession(null, selectedSession)
+        }}
+        onCompressSession={() => {
+          if (selectedSession) handleCompressSession(null, selectedSession)
+        }}
+        onDeleteSession={() => {
+          if (selectedSession) handleDeleteSession(null, selectedSession)
+        }}
+      />
+    {/key}
+  </div>
 </div>
 
 {#if loading}

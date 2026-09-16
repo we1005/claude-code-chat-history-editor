@@ -3,14 +3,69 @@
   import { onMount } from 'svelte'
   import { goto } from '$app/navigation'
   import { page } from '$app/state'
+  import { base } from '$app/paths'
   import type { Snippet } from 'svelte'
   import { provideSessionContext } from '@claude-sessions/ui'
   import * as api from '$lib/api'
   import { appConfig } from '$lib/stores/config'
   import { initTheme, toggleTheme, effectiveTheme, themePreference } from '$lib/stores/theme'
   import { ConfirmModal, Toast } from '$lib/components'
+  import Icon from '$lib/components/Icon.svelte'
+  import { sidebarOpen, toggleSidebar, initWorkspace } from '$lib/stores/workspace'
 
   let { children }: { children: Snippet } = $props()
+  let searchInput: HTMLInputElement | undefined = $state()
+  let searchDropdown: HTMLDivElement | undefined = $state()
+  onMount(initWorkspace)
+
+  function workspaceKeydown(event: KeyboardEvent) {
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === 'k' &&
+      !document.querySelector('[role="dialog"]')
+    ) {
+      event.preventDefault()
+      searchInput?.focus()
+      searchInput?.select()
+    }
+    if (event.key === 'Escape') {
+      showSearchDropdown = false
+      ++searchVersion
+      searchingTitle = false
+      searchingContent = false
+      if (window.matchMedia('(max-width: 899px)').matches) sidebarOpen.set(false)
+    }
+  }
+
+  function searchKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter' && searchResults[0]) {
+      event.preventDefault()
+      selectSearchResult(searchResults[0])
+      return
+    }
+    if (event.key === 'ArrowDown' && searchResults.length) {
+      event.preventDefault()
+      showSearchDropdown = true
+      requestAnimationFrame(() =>
+        searchDropdown?.querySelector<HTMLButtonElement>('button')?.focus()
+      )
+    }
+  }
+
+  function resultKeydown(event: KeyboardEvent, index: number) {
+    if (!['ArrowDown', 'ArrowUp', 'Escape'].includes(event.key)) return
+    event.preventDefault()
+    if (event.key === 'Escape') {
+      showSearchDropdown = false
+      searchInput?.focus()
+      return
+    }
+    const buttons = searchDropdown?.querySelectorAll<HTMLButtonElement>('[data-search-result]')
+    if (buttons?.length)
+      buttons[
+        (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+      ]?.focus()
+  }
 
   // Provide @claude-sessions/ui shared components with web-side adapters.
   // The vscode-extension webview supplies a different provider built on
@@ -111,6 +166,18 @@
   let searchingContent = $state(false)
   let showSearchDropdown = $state(false)
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  let searchVersion = 0
+  let searchError = $state('')
+  let completedQuery = ''
+  $effect(() => {
+    if (!showSearchDropdown) return
+    const outside = (event: PointerEvent) => {
+      if (event.target !== searchInput && !searchDropdown?.contains(event.target as Node))
+        showSearchDropdown = false
+    }
+    document.addEventListener('pointerdown', outside)
+    return () => document.removeEventListener('pointerdown', outside)
+  })
 
   // Cleanup options
   let clearEmpty = $state(true)
@@ -214,6 +281,11 @@
   const handleSearchInput = (e: Event) => {
     const query = (e.target as HTMLInputElement).value
     searchQuery = query
+    const version = ++searchVersion
+    searchResults = []
+    searchError = ''
+    searchingContent = false
+    searchingTitle = false
 
     if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 
@@ -224,7 +296,9 @@
     }
 
     // Debounce: search after 300ms of no typing
-    searchDebounceTimer = setTimeout(() => performSearch(query), 300)
+    searchingTitle = true
+    showSearchDropdown = true
+    searchDebounceTimer = setTimeout(() => performSearch(query, version), 300)
   }
 
   // Sort results to prioritize current session when on session page
@@ -243,51 +317,38 @@
     })
   }
 
-  const performSearch = async (query: string) => {
-    if (!query.trim()) return
+  const performSearch = async (query: string, version: number) => {
+    if (!query.trim() || version !== searchVersion) return
 
     const sessionInfo = currentSessionInfo
 
     // Phase 1: Title search (fast) - prioritize current session's project
     searchingTitle = true
-    showSearchDropdown = true
     try {
       const titleResults = await api.searchSessions(query, {
         searchContent: false,
         project: sessionInfo?.projectName,
       })
+      if (version !== searchVersion) return
       searchResults = sortResultsWithCurrentSession(titleResults)
-
-      // Auto-navigate when exactly one session ID match is found
-      const idMatches = titleResults.filter((r) => r.matchType === 'sessionId')
-      if (idMatches.length === 1) {
-        selectSearchResult(idMatches[0])
-        return
-      }
+      completedQuery = query
     } catch (e) {
-      console.error('Title search error:', e)
+      if (version === searchVersion) searchError = '搜索失败，请稍后重试。'
     } finally {
-      searchingTitle = false
+      if (version === searchVersion) searchingTitle = false
     }
+  }
 
-    // Phase 2: Content search (slow, runs in background) - search current session's project first
+  // Whole-transcript searches can be expensive; run only when explicitly chosen.
+  const performContentSearch = async () => {
+    const query = searchQuery
+    const version = searchVersion
+    if (!query.trim() || searchingContent) return
+    searchError = ''
     searchingContent = true
     try {
-      // If on session page, search current project first for faster results
-      if (sessionInfo) {
-        const projectResults = await api.searchSessions(query, {
-          searchContent: true,
-          project: sessionInfo.projectName,
-        })
-        const titleIds = new Set(searchResults.map((r) => `${r.projectName}:${r.sessionId}`))
-        const contentOnly = projectResults.filter(
-          (r) => !titleIds.has(`${r.projectName}:${r.sessionId}`)
-        )
-        searchResults = sortResultsWithCurrentSession([...searchResults, ...contentOnly])
-      }
-
-      // Then search all projects
       const allResults = await api.searchSessions(query, { searchContent: true })
+      if (version !== searchVersion) return
       // Merge results, keeping title matches first
       const existingIds = new Set(searchResults.map((r) => `${r.projectName}:${r.sessionId}`))
       const newResults = allResults.filter(
@@ -295,62 +356,65 @@
       )
       searchResults = sortResultsWithCurrentSession([...searchResults, ...newResults])
     } catch (e) {
-      console.error('Content search error:', e)
+      if (version === searchVersion) searchError = '内容搜索失败，请稍后重试。'
     } finally {
-      searchingContent = false
+      if (version === searchVersion) searchingContent = false
     }
   }
 
   const selectSearchResult = (result: api.SearchResult) => {
+    ++searchVersion
+    searchingTitle = false
+    searchingContent = false
     searchQuery = ''
     searchResults = []
     showSearchDropdown = false
     // Use path-based routing for proper navigation
-    goto(
-      `/session/${encodeURIComponent(result.projectName)}/${encodeURIComponent(result.sessionId)}`
-    )
+    goto(`/#${new URLSearchParams({ project: result.projectName, session: result.sessionId })}`)
   }
 
   const closeSearchDropdown = () => {
     // Delay to allow click on result
     setTimeout(() => {
-      showSearchDropdown = false
+      if (
+        !searchDropdown?.contains(document.activeElement) &&
+        document.activeElement !== searchInput
+      )
+        showSearchDropdown = false
     }, 200)
   }
 </script>
+
+<svelte:window onkeydown={workspaceKeydown} />
 
 <svelte:head>
   <title>Claude Code Chat History Editor</title>
 </svelte:head>
 
-<div class="min-h-screen flex flex-col bg-gh-bg text-gh-text">
-  <header
-    class="bg-gh-bg-secondary border-b border-gh-border px-8 py-4 flex justify-between items-center"
-  >
-    <div class="flex items-center gap-3">
+<div class="studio-shell bg-gh-bg text-gh-text">
+  <header class="studio-topbar">
+    <div class="studio-brand">
+      {#if !isSessionPage}
+        <button
+          class="quiet-button"
+          onclick={toggleSidebar}
+          aria-label={$sidebarOpen ? '收起项目侧栏' : '打开项目侧栏'}
+          aria-expanded={$sidebarOpen}
+          title="项目侧栏"><Icon name="panel" /></button
+        >
+      {/if}
       <a
         href={currentSessionInfo
-          ? `/#project=${encodeURIComponent(currentSessionInfo.projectName)}`
+          ? `/#${new URLSearchParams({ project: currentSessionInfo.projectName, session: currentSessionInfo.sessionId })}`
           : '/'}
         class="flex items-center gap-2 hover:text-gh-accent"
-        title={currentSessionInfo ? 'Back to project' : 'Claude Sessions'}
+        title={currentSessionInfo ? '返回工作台' : 'Claude History Editor'}
       >
-        <!-- Terminal/Session icon -->
-        <svg class="w-6 h-6 text-gh-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-          />
-        </svg>
-        <span class="text-lg font-semibold hidden sm:inline">Claude History Editor</span>
+        <img src={`${base}/favicon.svg?v=2`} alt="" />
+        <span class="studio-brand-name">Claude History</span>
       </a>
       {#if version}
-        <span
-          class="text-xs text-gh-text-secondary bg-gh-border px-2 py-0.5 rounded hidden sm:inline"
-          >v{version}</span
-        >
+        <span class="studio-version">v{version}</span>
       {/if}
       <button
         onclick={toggleTheme}
@@ -392,16 +456,27 @@
     </div>
 
     <!-- Search -->
-    <div class="relative flex-1 max-w-md mx-8">
+    <div class="studio-search">
+      <span class="studio-search-icon"><Icon name="search" size={16} /></span>
       <input
+        bind:this={searchInput}
         type="text"
-        placeholder="Search sessions..."
+        placeholder="搜索会话或 ID…"
+        aria-label="搜索会话或 ID"
         value={searchQuery}
         oninput={handleSearchInput}
-        onfocus={() => searchQuery && (showSearchDropdown = true)}
+        onfocus={() => {
+          if (searchQuery.trim()) {
+            showSearchDropdown = true
+            if (completedQuery !== searchQuery && !searchingTitle)
+              void performSearch(searchQuery, ++searchVersion)
+          }
+        }}
         onblur={closeSearchDropdown}
+        onkeydown={searchKeydown}
         class="w-full px-4 py-2 bg-gh-bg border border-gh-border rounded-md text-sm focus:outline-none focus:border-gh-accent"
       />
+      {#if !searchingTitle && !searchingContent}<kbd>⌘ K</kbd>{/if}
       {#if searchingTitle || searchingContent}
         <div class="absolute right-3 top-1/2 -translate-y-1/2">
           <svg class="animate-spin h-4 w-4 text-gh-text-secondary" viewBox="0 0 24 24">
@@ -424,19 +499,28 @@
       {/if}
 
       <!-- Search Dropdown -->
-      {#if showSearchDropdown && (searchResults.length > 0 || searchingTitle)}
+      {#if showSearchDropdown && searchQuery.trim()}
         <div
+          bind:this={searchDropdown}
           class="absolute top-full left-0 right-0 mt-1 bg-gh-bg-secondary border border-gh-border rounded-md shadow-lg max-h-80 overflow-y-auto z-50"
         >
+          {#if searchError}<div role="alert" class="px-4 py-3 text-sm text-gh-red">
+              {searchError}
+            </div>{/if}
           {#if searchResults.length === 0 && searchingTitle}
-            <div class="px-4 py-3 text-sm text-gh-text-secondary">Searching...</div>
+            <div role="status" class="px-4 py-3 text-sm text-gh-text-secondary">正在搜索会话…</div>
           {:else if searchResults.length === 0}
-            <div class="px-4 py-3 text-sm text-gh-text-secondary">No results found</div>
+            <div role="status" class="px-4 py-3 text-sm text-gh-text-secondary">
+              没有匹配的会话，可尝试搜索消息内容。
+            </div>
           {:else}
-            {#each searchResults as result}
+            {#each searchResults as result, index}
               <button
+                data-search-result
                 class="w-full text-left px-4 py-2 hover:bg-gh-border-subtle border-b border-gh-border last:border-b-0"
                 onclick={() => selectSearchResult(result)}
+                onkeydown={(event) => resultKeydown(event, index)}
+                onblur={closeSearchDropdown}
               >
                 <div class="flex items-center gap-2">
                   <span
@@ -468,35 +552,46 @@
                 {/if}
               </button>
             {/each}
-            {#if searchingContent}
-              <div class="px-4 py-2 text-xs text-gh-text-secondary border-t border-gh-border">
-                Searching content...
-              </div>
-            {/if}
           {/if}
+          <button
+            class="w-full px-4 py-3 text-left text-xs text-gh-accent border-t border-gh-border hover:bg-gh-bg disabled:opacity-60"
+            disabled={searchingContent || searchingTitle}
+            onclick={() => void performContentSearch()}
+            onblur={closeSearchDropdown}
+          >
+            <Icon name="search" size={13} class="mr-1" />{searchingContent
+              ? '正在搜索完整消息内容…'
+              : '搜索消息内容'}
+          </button>
         </div>
       {/if}
     </div>
 
-    <div class="flex gap-2">
+    <div class="studio-tools">
       <button
-        class="bg-gh-border-subtle border border-gh-border text-gh-text px-4 py-2 rounded-md text-sm transition-colors hover:bg-gh-border hover:border-gh-text-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+        class="quiet-button disabled:opacity-50"
         onclick={openCleanupModal}
         disabled={cleaning}
+        aria-label="清理会话"
       >
-        {cleaning ? 'Cleaning...' : 'Cleanup'}
+        <Icon name="archive" size={16} /><span class="control-label"
+          >{cleaning ? '清理中…' : '清理'}</span
+        >
       </button>
       <button
-        class="bg-gh-red border border-gh-red text-white px-4 py-2 rounded-md text-sm transition-colors hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="quiet-button danger disabled:opacity-50"
         onclick={handleShutdown}
         disabled={shuttingDown}
+        aria-label="关闭服务"
       >
-        {shuttingDown ? 'Shutting down...' : 'Shutdown'}
+        <Icon name="power" size={16} /><span class="control-label"
+          >{shuttingDown ? '关闭中…' : '关闭服务'}</span
+        >
       </button>
     </div>
   </header>
 
-  <main class="flex-1 {isSessionPage ? '' : 'p-8 max-w-7xl mx-auto'} w-full overflow-y-auto">
+  <main class="studio-main">
     {@render children()}
   </main>
 </div>

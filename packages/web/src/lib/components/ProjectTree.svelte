@@ -11,7 +11,6 @@
     getTotalTodoCount,
     sessionHasSubItems,
     canMoveSession,
-    TREE_ICONS,
     type SessionSortField,
     type SessionSortOrder,
     type TitleDisplayMode,
@@ -20,9 +19,10 @@
     type ProjectViewMode,
   } from '@claude-sessions/core'
   import { appConfig } from '$lib/stores/config'
-  import TooltipButton from './TooltipButton.svelte'
-  import FloatingTooltip from './FloatingTooltip.svelte'
+  import SessionActions from './SessionActions.svelte'
   import CommandTitle from './CommandTitle.svelte'
+  import Icon from './Icon.svelte'
+  import { sidebarOpen } from '$lib/stores/workspace'
 
   interface Props {
     projects: Project[]
@@ -76,12 +76,12 @@
 
   // Sort field labels for display
   const sortFieldLabels: Record<SessionSortField, string> = {
-    summary: 'Summary Time',
-    modified: 'Modified',
-    created: 'Created',
-    updated: 'Last Message',
-    messageCount: 'Messages',
-    title: 'Title',
+    summary: '摘要更新时间',
+    modified: '文件修改时间',
+    created: '创建时间',
+    updated: '最后消息时间',
+    messageCount: '消息数量',
+    title: '会话标题',
   }
 
   const handleSortFieldChange = (e: Event) => {
@@ -108,9 +108,9 @@
   }
 
   const viewModeIcon: Record<ProjectViewMode, string> = {
-    flat: '☰',
-    'folder-group': '📁',
-    'date-group': '📅',
+    flat: 'menu',
+    'folder-group': 'folder',
+    'date-group': 'clock',
   }
 
   // Get session data with summary info
@@ -136,7 +136,7 @@
       agentName: data?.agentName,
       updatedAt: data?.updatedAt ?? session.updatedAt,
       messageCount: session.messageCount,
-    })
+    }).replace(/💬\s*(\d[\d,]*)/g, '$1 条消息')
   }
 
   // Check if session has agents or todos (using core utilities)
@@ -208,6 +208,22 @@
 
   // Expanded sessions state (for showing summaries, todos, agents sublist)
   let expandedSessions = $state<Set<string>>(new Set())
+  let projectList: HTMLUListElement | undefined = $state()
+  $effect(() => {
+    const id = selectedSession?.id
+    if (!id || !$sidebarOpen || !projectList) return
+    const frame = requestAnimationFrame(() => {
+      const target = projectList?.querySelector<HTMLElement>(
+        `[data-session-select="${CSS.escape(id)}"]`
+      )
+      if (!target || !projectList || !projectList.clientHeight) return
+      const bounds = target.getBoundingClientRect()
+      const viewport = projectList.getBoundingClientRect()
+      if (bounds.top < viewport.top || bounds.bottom > viewport.bottom)
+        projectList.scrollTop += bounds.top - viewport.top - projectList.clientHeight / 3
+    })
+    return () => cancelAnimationFrame(frame)
+  })
 
   // Auto-expand selected session
   $effect(() => {
@@ -274,36 +290,28 @@
   const indentStyle = (depth: number): string => `padding-left: ${depth * 12 + 16}px;`
 </script>
 
-<aside class="bg-gh-bg-secondary border border-gh-border rounded-lg overflow-hidden flex flex-col">
-  <div class="p-4 border-b border-gh-border bg-gh-bg">
-    <h2 class="text-base font-semibold mb-2">
-      Projects ({projects.length})
+<aside class="project-rail" aria-label="项目和会话">
+  <div class="project-rail-heading">
+    <h2 class="project-rail-title">
+      <Icon name="folder" size={17} />项目<span class="project-rail-count">{projects.length}</span>
     </h2>
     <!-- Sort Options -->
-    <div class="flex items-center gap-2 text-sm">
-      <span class="text-gh-text-secondary">Sort:</span>
-      <select
-        class="bg-gh-bg-secondary border border-gh-border rounded px-2 py-1 text-sm text-gh-text cursor-pointer hover:border-gh-accent focus:border-gh-accent focus:outline-none"
-        value={sortField}
-        onchange={handleSortFieldChange}
-      >
+    <div class="project-rail-sort">
+      <select aria-label="会话排序方式" value={sortField} onchange={handleSortFieldChange}>
         {#each Object.entries(sortFieldLabels) as [value, label]}
           <option {value}>{label}</option>
         {/each}
       </select>
       <button
-        class="bg-gh-bg-secondary border border-gh-border rounded px-2 py-1 text-sm cursor-pointer hover:border-gh-accent hover:bg-gh-border-subtle"
+        class="quiet-button"
         onclick={toggleSortOrder}
         title={sortOrder === 'desc' ? 'Descending (newest first)' : 'Ascending (oldest first)'}
+        aria-label={sortOrder === 'desc' ? '当前降序，切换为升序' : '当前升序，切换为降序'}
       >
-        {sortOrder === 'desc' ? '↓' : '↑'}
+        <Icon name={sortOrder === 'desc' ? 'arrowDown' : 'arrowUp'} size={15} />
       </button>
-      <span class="border-l border-gh-border h-4"></span>
       <button
-        class="bg-gh-bg-secondary border border-gh-border rounded px-2 py-1 text-sm cursor-pointer hover:border-gh-accent hover:bg-gh-border-subtle {titleDisplayMode ===
-        'datetime'
-          ? 'border-gh-accent text-gh-accent'
-          : ''}"
+        class="quiet-button {titleDisplayMode === 'datetime' ? 'text-gh-accent' : ''}"
         onclick={() => onTitleModeChange?.(titleDisplayMode === 'message' ? 'datetime' : 'message')}
         aria-label={titleDisplayMode === 'message'
           ? 'Showing first message — click for date/time'
@@ -312,22 +320,22 @@
           ? 'Showing first message — click for date/time'
           : 'Showing date/time — click for first message'}
       >
-        {titleDisplayMode === 'datetime' ? '🕐' : 'Aa'}
+        <Icon name={titleDisplayMode === 'datetime' ? 'clock' : 'text'} size={15} />
       </button>
       <button
-        class="bg-gh-bg-secondary border border-gh-border rounded px-2 py-1 text-sm cursor-pointer hover:border-gh-accent hover:bg-gh-border-subtle"
+        class="quiet-button"
         onclick={cycleViewMode}
         aria-label={`View mode: ${viewModeLabel[viewMode]} (click to cycle)`}
         title={`View mode: ${viewModeLabel[viewMode]} (click to cycle)`}
         data-testid="view-mode-toggle"
         data-view-mode={viewMode}
       >
-        {viewModeIcon[viewMode]}
+        <Icon name={viewModeIcon[viewMode]} size={15} />
       </button>
     </div>
   </div>
 
-  <ul class="overflow-y-auto flex-1" data-view-mode={viewMode}>
+  <ul bind:this={projectList} class="project-list overflow-y-auto flex-1" data-view-mode={viewMode}>
     {#if isGrouped}
       {#each treeNodes as node}
         {@render treeNode(node)}
@@ -363,10 +371,10 @@
       onclick={() => onToggleGroup?.(group.name)}
       aria-expanded={expanded}
     >
-      <span class="text-xs w-3 text-gh-text-secondary">
-        {expanded ? '▼' : '▶'}
-      </span>
-      <span class="text-gh-text-secondary">📁</span>
+      <span class="text-gh-text-secondary"
+        ><Icon name={expanded ? 'down' : 'right'} size={13} /></span
+      >
+      <span class="text-gh-text-secondary"><Icon name="folder" size={15} /></span>
       <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap" title={group.name}>
         {group.displayName}
       </span>
@@ -391,14 +399,12 @@
 -->
 {#snippet projectBlock(project: Project, displayPath: string, depth: number)}
   {@const isDropTarget = dropTargetProject === project.name}
-  <li class="border-b border-gh-border-subtle">
+  <li class="project-folder">
     <!-- Project Header -->
     <button
-      class="w-full py-3 bg-transparent border-none text-gh-text cursor-pointer text-left flex items-center gap-2 font-medium hover:bg-gh-border-subtle {expandedProjects.has(
-        project.name
-      )
-        ? 'bg-gh-accent/10'
-        : ''} {isDropTarget ? 'bg-gh-green/20 ring-2 ring-gh-green ring-inset' : ''}"
+      class="project-folder-button {isDropTarget
+        ? 'bg-gh-green/20 ring-2 ring-gh-green ring-inset'
+        : ''}"
       style={indentStyle(depth)}
       onclick={() => onToggleProject(project.name)}
       ondragover={(e) => handleDragOver(e, project.name)}
@@ -406,21 +412,23 @@
       ondrop={(e) => handleDrop(e, project.name)}
       data-testid="project-row"
       data-project-name={project.name}
+      aria-expanded={expandedProjects.has(project.name)}
     >
-      <span class="text-xs w-3 text-gh-text-secondary">
-        {expandedProjects.has(project.name) ? '▼' : '▶'}
-      </span>
+      <span class="text-gh-text-secondary"
+        ><Icon name={expandedProjects.has(project.name) ? 'down' : 'right'} size={13} /></span
+      >
+      <span class="text-gh-text-secondary"><Icon name="folder" size={15} /></span>
       <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap" title={displayPath}>
         {formatProjectName(displayPath)}
       </span>
-      <span class="bg-gh-border px-2 py-0.5 rounded-full text-xs font-normal">
+      <span class="rail-counter">
         {project.sessionCount}
       </span>
     </button>
 
     <!-- Sessions List -->
     {#if expandedProjects.has(project.name)}
-      <ul class="bg-gh-bg">
+      <ul>
         {#if loadingProject === project.name}
           <li class="py-2 px-8 text-gh-text-secondary text-sm">Loading...</li>
         {:else}
@@ -431,14 +439,13 @@
             {@const displayTitle = getDisplayTitle(session)}
             {@const secondaryInfo = getSecondaryInfo(session)}
             {@const data = getSessionData(session.projectName, session.id)}
-            {@const isTitleFallback = !data?.customTitle}
             {@const isExpanded = expandedSessions.has(session.id)}
             {@const hasSubItems = hasSessionSubItems(session)}
             {@const hasSideIcons = sessionInfo.agents > 0 || sessionInfo.todos > 0}
             <li
-              class="relative border-t border-gh-border-subtle group {isSelected
-                ? 'bg-gh-accent/20 border-l-3 border-l-gh-accent'
-                : ''} {isDragging ? 'opacity-50' : ''}"
+              class="project-session relative group {isSelected ? 'selected' : ''} {isDragging
+                ? 'opacity-50'
+                : ''}"
               draggable="true"
               ondragstart={(e) => handleDragStart(e, session)}
               ondragend={handleDragEnd}
@@ -451,29 +458,28 @@
                     onclick={(e) => toggleSessionExpand(e, session.id)}
                     title={isExpanded ? 'Collapse' : 'Expand'}
                   >
-                    {isExpanded ? '▼' : '▶'}
+                    <Icon name={isExpanded ? 'down' : 'right'} size={12} />
                   </button>
                 {:else}
                   <span class="w-5 ml-1"></span>
                 {/if}
-                <FloatingTooltip content={getCachedTooltip(session)} class="flex-1 min-w-0 flex">
+                <div class="flex-1 min-w-0 flex">
                   <button
-                    class="w-full py-2 pr-2 bg-transparent border-none text-gh-text cursor-pointer text-left flex items-center gap-2 text-sm"
+                    class="session-select w-full pr-3 bg-transparent text-gh-text cursor-pointer text-left flex items-center gap-2 text-[13px]"
                     onclick={() => onSelectSession(session)}
+                    data-session-select={session.id}
+                    title={getCachedTooltip(session)}
+                    aria-current={isSelected ? 'page' : undefined}
                   >
                     <span class="flex-1 min-w-0 flex flex-col gap-0.5">
                       <!-- Line 1: title -->
-                      <span
-                        class="overflow-hidden text-ellipsis whitespace-nowrap {isTitleFallback
-                          ? 'italic text-gh-text-secondary'
-                          : ''}"
-                      >
+                      <span class="overflow-hidden text-ellipsis whitespace-nowrap font-medium">
                         <CommandTitle title={displayTitle} />
                       </span>
                       <!-- Line 2: secondary metadata (agentName · time · 💬 count) -->
                       {#if secondaryInfo}
                         <span
-                          class="overflow-hidden text-ellipsis whitespace-nowrap text-xs text-gh-text-secondary"
+                          class="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-gh-text-secondary"
                         >
                           {secondaryInfo}
                         </span>
@@ -485,58 +491,34 @@
                       >
                         {#if sessionInfo.agents > 0}
                           <span class="flex items-center gap-0.5">
-                            <span>{TREE_ICONS.agent.emoji}</span><span>{sessionInfo.agents}</span>
+                            <Icon name="spark" size={12} /><span>{sessionInfo.agents}</span>
                           </span>
                         {/if}
                         {#if sessionInfo.todos > 0}
                           <span class="flex items-center gap-0.5">
-                            <span>{TREE_ICONS['todos-group'].emoji}</span><span
-                              >{sessionInfo.todos}</span
-                            >
+                            <Icon name="checklist" size={12} /><span>{sessionInfo.todos}</span>
                           </span>
                         {/if}
                       </span>
                     {/if}
                   </button>
-                </FloatingTooltip>
+                </div>
 
                 <!-- Action buttons (visible on hover, absolute positioned) -->
                 <div
-                  class="absolute right-0 top-0 h-full flex items-center gap-0.5 pr-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity bg-gh-bg"
+                  class="session-row-actions absolute right-1 top-2 h-8 flex items-center gap-0.5 px-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
                 >
-                  {#if onResumeSession}
-                    <TooltipButton
-                      class="p-1 rounded hover:bg-gh-green/20 text-xs"
-                      onclick={(e) => onResumeSession(e, session)}
-                      title="Resume session"
-                    >
-                      ▶️
-                    </TooltipButton>
-                  {/if}
-                  <TooltipButton
-                    class="p-1 rounded hover:bg-gh-border text-xs"
-                    onclick={(e) => onRenameSession(e, session)}
-                    title="Rename"
-                  >
-                    ✏️
-                  </TooltipButton>
-                  {#if onCompressSession}
-                    <TooltipButton
-                      aria-label="Compress session"
-                      class="p-1 rounded hover:bg-gh-accent/20 text-xs"
-                      onclick={(e) => onCompressSession(e, session)}
-                      title="Compress session"
-                    >
-                      🗜️
-                    </TooltipButton>
-                  {/if}
-                  <TooltipButton
-                    class="p-1 rounded hover:bg-gh-red/20 text-xs"
-                    onclick={(e) => onDeleteSession(e, session)}
-                    title="Delete"
-                  >
-                    🗑️
-                  </TooltipButton>
+                  <SessionActions
+                    compact
+                    onResumeSession={onResumeSession
+                      ? (event) => onResumeSession?.(event, session)
+                      : undefined}
+                    onCompressSession={onCompressSession
+                      ? (event) => onCompressSession?.(event, session)
+                      : undefined}
+                    onRenameSession={(event) => onRenameSession(event, session)}
+                    onDeleteSession={(event) => onDeleteSession(event, session)}
+                  />
                 </div>
               </div>
 
@@ -554,7 +536,7 @@
                         title={summary.summary}
                       >
                         <div class="flex items-start gap-2">
-                          <span class="flex-shrink-0">{TREE_ICONS.summary.emoji}</span>
+                          <span class="flex-shrink-0"><Icon name="file" size={13} /></span>
                           <span class="overflow-hidden text-ellipsis line-clamp-2">
                             {summary.summary.length > 100
                               ? summary.summary.slice(0, 97) + '...'
@@ -574,7 +556,7 @@
                     <li
                       class="py-1.5 px-4 pl-8 text-gh-text-secondary hover:bg-gh-border-subtle/50 flex items-start gap-2"
                     >
-                      <span class="flex-shrink-0">{TREE_ICONS['todos-group'].emoji}</span>
+                      <span class="flex-shrink-0"><Icon name="checklist" size={13} /></span>
                       <span>Session Todos ({data.todos.sessionTodos.length})</span>
                     </li>
                   {/if}
@@ -583,7 +565,7 @@
                       <li
                         class="py-1.5 px-4 pl-8 text-gh-text-secondary hover:bg-gh-border-subtle/50 flex items-start gap-2"
                       >
-                        <span class="flex-shrink-0">{TREE_ICONS['todos-group'].emoji}</span>
+                        <span class="flex-shrink-0"><Icon name="checklist" size={13} /></span>
                         <span>Agent Todos ({agentTodo.todos.length})</span>
                       </li>
                     {/each}
@@ -595,7 +577,7 @@
                         class="py-1.5 px-4 pl-8 text-gh-text-secondary hover:bg-gh-border-subtle/50 flex items-start gap-2"
                         title={agent.name ?? agent.id}
                       >
-                        <span class="flex-shrink-0">{TREE_ICONS.agent.emoji}</span>
+                        <span class="flex-shrink-0"><Icon name="spark" size={13} /></span>
                         <span class="overflow-hidden text-ellipsis whitespace-nowrap">
                           {agent.name ?? agent.id.slice(0, 12) + '...'} ({agent.messageCount} msgs)
                         </span>

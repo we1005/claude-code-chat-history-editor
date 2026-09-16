@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Message } from '$lib/api'
+  import Icon from './Icon.svelte'
 
   const NAV_MODES = ['user', 'assistant', 'all', 'compact', 'hook_stop'] as const
   type NavMode = (typeof NAV_MODES)[number]
@@ -10,31 +11,31 @@
   > = {
     user: {
       label: 'User messages',
-      icon: '👤',
+      icon: 'user',
       prevLabel: 'Previous user message',
       nextLabel: 'Next user message',
     },
     assistant: {
       label: 'Assistant messages',
-      icon: '✨',
+      icon: 'spark',
       prevLabel: 'Previous assistant message',
       nextLabel: 'Next assistant message',
     },
     all: {
       label: 'All messages',
-      icon: '💬',
+      icon: 'message',
       prevLabel: 'Previous message',
       nextLabel: 'Next message',
     },
     compact: {
       label: 'Compact summaries',
-      icon: '📍',
+      icon: 'bookmark',
       prevLabel: 'Previous compact summary',
       nextLabel: 'Next compact summary',
     },
     hook_stop: {
       label: 'Stop hooks',
-      icon: '⏹',
+      icon: 'square',
       prevLabel: 'Previous stop hook',
       nextLabel: 'Next stop hook',
     },
@@ -243,13 +244,27 @@
   }
 
   const scrollToIndex = (index: number) => {
-    if (!scrollContainer || index < 0 || index >= messages.length) return
+    if (!scrollContainer || index < 0 || index >= messages.length) return false
     const msgId = messages[index].uuid ?? `idx-${index}`
-    const element = scrollContainer.querySelector(`[data-msg-id="${msgId}"]`)
+    const element = scrollContainer.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`)
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const top =
+        scrollContainer.scrollTop +
+        element.getBoundingClientRect().top -
+        scrollContainer.getBoundingClientRect().top -
+        20
+      const nearby = Math.abs(top - scrollContainer.scrollTop) < scrollContainer.clientHeight * 2
+      scrollContainer.scrollTo({
+        top: Math.max(0, top),
+        behavior:
+          nearby && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+            ? 'smooth'
+            : 'auto',
+      })
       _currentVisibleIndex = index
+      return true
     }
+    return false
   }
 
   const scrollToTop = () => {
@@ -269,8 +284,7 @@
     const indices = getNavigableIndices()
     for (let i = indices.length - 1; i >= 0; i--) {
       if (indices[i] < currentIdx) {
-        scrollToIndex(indices[i])
-        return
+        if (scrollToIndex(indices[i])) return
       }
     }
     scrollToTop()
@@ -282,34 +296,27 @@
     const indices = getNavigableIndices()
     for (const idx of indices) {
       if (idx > currentIdx) {
-        scrollToIndex(idx)
-        return
+        if (scrollToIndex(idx)) return
       }
     }
     scrollToBottom()
   }
 
-  const buttonClass =
-    'p-1.5 text-sm rounded border border-gh-border hover:bg-gh-border-subtle text-gh-text-secondary hover:text-gh-text transition-colors bg-gh-bg'
+  const buttonClass = 'quiet-button !p-1.5'
 </script>
 
 {#if messages.length > 0}
-  <div class="flex gap-0.5 {className}">
-    <button class="nav-btn {buttonClass}" onclick={scrollToTop}>
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M5 11l7-7 7 7M5 19l7-7 7 7"
-        />
-      </svg>
+  <div class="flex gap-0.5 rounded-lg bg-gh-bg-secondary p-1 {className}">
+    <button class="nav-btn {buttonClass}" onclick={scrollToTop} aria-label="跳到开头">
+      <Icon name="first" size={15} />
       <span class="tooltip">Top</span>
     </button>
-    <button class="nav-btn {buttonClass}" onclick={scrollToPrev}>
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
-      </svg>
+    <button
+      class="nav-btn {buttonClass}"
+      onclick={scrollToPrev}
+      aria-label={NAV_MODE_CONFIG[navMode].prevLabel}
+    >
+      <Icon name="up" size={15} />
       <span class="tooltip">{NAV_MODE_CONFIG[navMode].prevLabel}</span>
     </button>
     <div class="dropdown-wrapper" role="group" bind:this={dropdownRef}>
@@ -328,7 +335,7 @@
         aria-expanded={dropdownOpen}
         aria-label="Navigation mode: {NAV_MODE_CONFIG[navMode].label}"
       >
-        <span class="mode-icon">{NAV_MODE_CONFIG[navMode].icon}</span>
+        <Icon name={NAV_MODE_CONFIG[navMode].icon} size={15} />
         <span class="tooltip">Navigate: {NAV_MODE_CONFIG[navMode].label}</span>
       </button>
       {#if dropdownOpen}
@@ -350,28 +357,23 @@
               tabindex={i === focusedIndex ? 0 : -1}
               onclick={() => selectMode(mode)}
             >
-              <span class="dropdown-icon">{NAV_MODE_CONFIG[mode].icon}</span>
+              <Icon name={NAV_MODE_CONFIG[mode].icon} size={15} />
               <span>{NAV_MODE_CONFIG[mode].label}</span>
             </button>
           {/each}
         </div>
       {/if}
     </div>
-    <button class="nav-btn {buttonClass}" onclick={scrollToNext}>
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 9l7 7 7-7" />
-      </svg>
+    <button
+      class="nav-btn {buttonClass}"
+      onclick={scrollToNext}
+      aria-label={NAV_MODE_CONFIG[navMode].nextLabel}
+    >
+      <Icon name="down" size={15} />
       <span class="tooltip">{NAV_MODE_CONFIG[navMode].nextLabel}</span>
     </button>
-    <button class="nav-btn {buttonClass}" onclick={scrollToBottom}>
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M5 5l7 7 7-7M5 13l7 7 7-7"
-        />
-      </svg>
+    <button class="nav-btn {buttonClass}" onclick={scrollToBottom} aria-label="跳到末尾">
+      <Icon name="last" size={15} />
       <span class="tooltip">Bottom</span>
     </button>
   </div>
@@ -382,11 +384,7 @@
     position: relative;
   }
   .mode-btn {
-    border-style: dashed;
-  }
-  .mode-icon {
-    font-size: 0.875rem;
-    line-height: 1;
+    color: var(--color-gh-accent);
   }
   .dropdown-wrapper {
     position: relative;
@@ -399,9 +397,9 @@
     margin-top: 0.25rem;
     min-width: 10rem;
     border-radius: 0.375rem;
-    background-color: #1c2128;
-    border: 1px solid #30363d;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    background-color: var(--color-gh-bg);
+    border: 1px solid var(--color-gh-border);
+    box-shadow: 0 8px 24px #14233b20;
     z-index: 50;
     overflow: hidden;
   }
@@ -412,7 +410,7 @@
     width: 100%;
     padding: 0.375rem 0.75rem;
     font-size: 0.75rem;
-    color: #c9d1d9;
+    color: var(--color-gh-text);
     background: none;
     border: none;
     cursor: pointer;
@@ -421,20 +419,15 @@
   }
   .dropdown-item:hover,
   .dropdown-item.focused {
-    background-color: #30363d;
+    background-color: var(--color-gh-border-subtle);
   }
   .dropdown-item:focus {
     outline: none;
-    background-color: #30363d;
+    background-color: var(--color-gh-border-subtle);
   }
   .dropdown-item.active {
-    background-color: #1f6feb33;
-    color: #58a6ff;
-  }
-  .dropdown-icon {
-    font-size: 0.875rem;
-    width: 1.25rem;
-    text-align: center;
+    background-color: var(--color-gh-accent-subtle);
+    color: var(--color-gh-accent);
   }
   .tooltip {
     position: absolute;

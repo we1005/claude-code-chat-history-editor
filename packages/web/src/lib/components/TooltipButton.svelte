@@ -47,7 +47,10 @@
   class="tooltip-btn {className}"
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
+  onfocus={handleMouseEnter}
+  onblur={handleMouseLeave}
   {...buttonProps}
+  aria-label={buttonProps['aria-label'] ?? title}
 >
   {@render children()}
 </button>
@@ -65,9 +68,26 @@
     align-items: center;
     justify-content: center;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     cursor: pointer;
-    padding: 0;
+    padding: 6px;
+    min-width: 30px;
+    min-height: 30px;
+    border-radius: 6px;
+    transition:
+      background 140ms,
+      color 140ms;
+  }
+  .tooltip-btn:hover {
+    background: var(--color-gh-border-subtle);
+  }
+  .tooltip-btn:focus-visible {
+    outline: 2px solid var(--color-gh-accent);
+    outline-offset: 1px;
+  }
+  .tooltip-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
   .tooltip {
     position: fixed;
@@ -76,9 +96,9 @@
     font-size: 0.75rem;
     white-space: nowrap;
     border-radius: 0.25rem;
-    background-color: #1c2128;
-    color: #c9d1d9;
-    border: 1px solid #30363d;
+    background-color: var(--color-gh-text);
+    color: var(--color-gh-bg);
+    border: 1px solid var(--color-gh-border);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     pointer-events: none;
     z-index: 9999;

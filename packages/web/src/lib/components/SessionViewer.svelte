@@ -6,7 +6,10 @@
   } from '@claude-sessions/core'
   import type { AgentInfo, Message, SessionMeta, TodoItem } from '$lib/api'
   import * as api from '$lib/api'
-  import { getDisplayTitle, truncate } from '$lib/utils'
+  import { getDisplayTitle } from '$lib/utils'
+  import { onDestroy, tick } from 'svelte'
+  import Icon from './Icon.svelte'
+  import { sidebarOpen } from '$lib/stores/workspace'
   import HistoryMessageEditor from './HistoryMessageEditor.svelte'
   import MessageFilter from './MessageFilter.svelte'
   import MessageList from './MessageList.svelte'
@@ -14,6 +17,13 @@
   import ValidationBadge from './ValidationBadge.svelte'
   import CommandTitle from './CommandTitle.svelte'
   import SessionActions from './SessionActions.svelte'
+  import SessionSearchResults from './SessionSearchResults.svelte'
+  import {
+    indexSessionMessages,
+    searchSessionMessages,
+    recordKeys,
+    type SessionSearchHit,
+  } from '$lib/utils/session-search'
   import {
     ALL_MESSAGE_CATEGORIES,
     getMessageCategory,
@@ -44,6 +54,8 @@
     enableScroll?: boolean
     externalScrollContainer?: HTMLElement | null
     fullWidth?: boolean
+    loading?: boolean
+    loadError?: string
   }
 
   let {
@@ -65,6 +77,8 @@
     enableScroll = true,
     externalScrollContainer = null,
     fullWidth = false,
+    loading = false,
+    loadError = '',
   }: Props = $props()
 
   const displayTitle = $derived(
@@ -163,6 +177,117 @@
   let activeTab = $state<TabType>('messages')
   let agentMessages = $state<Message[]>([])
   let loadingAgent = $state(false)
+  let searchOpen = $state(false)
+  let searchDraft = $state('')
+  let searchQuery = $state('')
+  let includeMetadata = $state(false)
+  let contextMode = $state(false)
+  let selectedSearchKey = $state<string | null>(null)
+  let locateRequest = $state(0)
+  let searchError = $state('')
+  let searchInput: HTMLInputElement | undefined = $state()
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  const searchSource = $derived(activeTab.startsWith('agent:') ? agentMessages : messages)
+  const searchIndex = $derived(
+    searchOpen ? indexSessionMessages(searchSource, includeMetadata) : []
+  )
+  const searchHits = $derived(searchSessionMessages(searchIndex, searchQuery))
+  const selectedHitIndex = $derived(searchHits.findIndex((hit) => hit.key === selectedSearchKey))
+  const selectedHit = $derived(searchHits[selectedHitIndex] || null)
+  const mainIndex = $derived.by(() => {
+    const keys = recordKeys(messages)
+    return messages.map((message, index) => ({ key: keys[index], message }))
+  })
+  const agentIndex = $derived.by(() => {
+    const keys = recordKeys(agentMessages)
+    return agentMessages.map((message, index) => ({ key: keys[index], message }))
+  })
+  const mainDisplay = $derived(
+    contextMode && searchQuery
+      ? mainIndex
+      : mainIndex.filter((entry) => visibleCategories.has(getMessageCategory(entry.message)))
+  )
+  const agentDisplay = $derived(
+    contextMode && searchQuery
+      ? agentIndex
+      : agentIndex.filter((entry) => visibleCategories.has(getMessageCategory(entry.message)))
+  )
+
+  function changeSearch(value: string) {
+    searchDraft = value
+    contextMode = false
+    selectedSearchKey = null
+    searchError = ''
+    clearTimeout(searchTimer)
+    searchTimer = setTimeout(() => {
+      searchQuery = value.trim()
+      if (scrollContainer) scrollContainer.scrollTop = 0
+    }, 150)
+  }
+  function closeSearch() {
+    clearTimeout(searchTimer)
+    searchDraft = ''
+    searchQuery = ''
+    contextMode = false
+    selectedSearchKey = null
+    searchOpen = false
+    searchError = ''
+  }
+  async function openSearch() {
+    if (!session) return
+    if (activeTab === 'todos') {
+      activeTab = 'messages'
+      await tick()
+    }
+    searchOpen = true
+    await tick()
+    searchInput?.focus()
+    searchInput?.select()
+  }
+  function locate(hit: SessionSearchHit) {
+    selectedSearchKey = hit.key
+    contextMode = true
+    searchError = ''
+    locateRequest++
+  }
+  function navigateHit(direction: number) {
+    if (!searchHits.length) return
+    const index =
+      selectedHitIndex < 0
+        ? direction > 0
+          ? 0
+          : searchHits.length - 1
+        : (selectedHitIndex + direction + searchHits.length) % searchHits.length
+    locate(searchHits[index])
+  }
+  async function returnSearchResults() {
+    contextMode = false
+    searchError = ''
+    await tick()
+    const selected = scrollContainer?.querySelector<HTMLElement>(
+      `[data-search-hit="${CSS.escape(selectedSearchKey || '')}"]`
+    )
+    if (selected && scrollContainer)
+      scrollContainer.scrollTop +=
+        selected.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top - 30
+  }
+  function searchKeys(event: KeyboardEvent) {
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === 'f' &&
+      session &&
+      !document.querySelector('[role="dialog"]')
+    ) {
+      event.preventDefault()
+      void openSearch()
+    }
+  }
+  $effect(() => {
+    void session?.id
+    void activeTab
+    closeSearch()
+  })
+  onDestroy(() => clearTimeout(searchTimer))
 
   const filteredAgentMessages = $derived(
     agentMessages.filter((m) => visibleCategories.has(getMessageCategory(m)))
@@ -214,20 +339,27 @@
 
   // Load agent messages when agent tab is selected
   $effect(() => {
+    let cancelled = false
     if (selectedAgentId && session) {
       loadingAgent = true
+      agentMessages = []
       api
         .getAgentMessages(session.projectName, session.id, selectedAgentId)
         .then((msgs) => {
-          agentMessages = msgs
+          if (!cancelled) agentMessages = msgs
         })
         .catch((e) => {
-          console.error('Failed to load agent messages:', e)
-          agentMessages = []
+          if (!cancelled) {
+            console.error('Failed to load agent messages:', e)
+            agentMessages = []
+          }
         })
         .finally(() => {
-          loadingAgent = false
+          if (!cancelled) loadingAgent = false
         })
+    }
+    return () => {
+      cancelled = true
     }
   })
 
@@ -243,9 +375,30 @@
   }
 
   // Server sync — refreshes messages from server to get chain repair results
+  let refreshing = $state(false)
+  let refreshError = $state('')
   const syncFromServer = async () => {
     if (!onRefresh) return
-    await onRefresh()
+    refreshing = true
+    try {
+      await onRefresh()
+    } finally {
+      refreshing = false
+    }
+  }
+  let copied = $state(false)
+  let copyTimer: ReturnType<typeof setTimeout>
+  onDestroy(() => clearTimeout(copyTimer))
+  const copySessionId = async () => {
+    if (!session) return
+    try {
+      await navigator.clipboard.writeText(session.id)
+      copied = true
+      clearTimeout(copyTimer)
+      copyTimer = setTimeout(() => (copied = false), 1800)
+    } catch {
+      refreshError = '自动复制不可用，请选中会话 ID 手动复制。'
+    }
   }
 
   // Undo all deletions - restore messages via API
@@ -397,15 +550,14 @@
   const scrollContainer = $derived(externalScrollContainer ?? internalScrollContainer)
 </script>
 
+<svelte:window onkeydown={searchKeys} />
+
 <section
-  class="bg-gh-bg-secondary overflow-hidden flex flex-col h-full {fullWidth
-    ? ''
-    : 'border border-gh-border rounded-lg'}"
+  class="session-viewer {fullWidth ? '' : 'border border-gh-border rounded-lg'}"
+  data-session-viewer
 >
   <!-- Header -->
-  <div
-    class="p-4 border-b border-gh-border bg-gh-bg flex flex-wrap justify-between items-start gap-2"
-  >
+  <div class="session-viewer-header">
     {#if backUrl}
       <a
         href={backUrl}
@@ -422,19 +574,29 @@
         </svg>
       </a>
     {/if}
-    <div class="flex-1 min-w-[200px]">
+    <div class="session-viewer-title">
       {#if session}
-        <h2 class="text-base font-semibold">
-          <CommandTitle title={truncate(displayTitle, 50)} />
+        <h2 class="line-clamp-2" title={displayTitle}>
+          <CommandTitle title={displayTitle} />
         </h2>
-        <div class="flex items-center gap-2 mt-1">
-          <button
-            class="text-xs text-gh-text-secondary font-mono hover:text-gh-accent
-                     hover:underline cursor-pointer bg-transparent border-none p-0 text-left"
-            onclick={openSessionFile}
-            title="Open session file in VSCode"
+        <div class="flex flex-wrap items-center gap-1 mt-2">
+          <code
+            class="text-[11px] text-gh-text-secondary select-all break-all mr-1"
+            data-session-id={session.id}>{session.id}</code
           >
-            {session.id}
+          <button
+            class="quiet-button !p-1"
+            onclick={copySessionId}
+            aria-label="复制会话 ID"
+            title="复制会话 ID"><Icon name={copied ? 'check' : 'copy'} size={13} /></button
+          >
+          <button
+            class="quiet-button !p-1"
+            onclick={openSessionFile}
+            title="在编辑器中打开会话文件"
+            aria-label="在编辑器中打开会话文件"
+          >
+            <Icon name="file" size={13} />
           </button>
           <ValidationBadge
             chainErrors={chainResult.errors}
@@ -445,10 +607,26 @@
           />
         </div>
       {:else}
-        <h2 class="text-base font-semibold">Messages</h2>
+        <h2>会话工作台</h2>
       {/if}
     </div>
-    <div class="flex flex-col items-end gap-2">
+    <div class="session-viewer-controls">
+      {#if session}<button
+          class="quiet-button"
+          aria-label="搜索当前会话"
+          title="搜索当前会话（⌘ / Ctrl + F）"
+          onclick={() => void openSearch()}><Icon name="search" size={17} /></button
+        >{/if}
+      {#if session && onRefresh}<button
+          class="quiet-button"
+          disabled={loading || refreshing}
+          aria-label="刷新会话"
+          title="刷新会话"
+          onclick={() => {
+            refreshError = ''
+            void syncFromServer().catch(() => (refreshError = '刷新失败，请稍后重试。'))
+          }}><Icon name="refresh" size={16} class={refreshing ? 'animate-spin' : ''} /></button
+        >{/if}
       {#if session}
         <SessionActions {onResumeSession} {onCompressSession} {onRenameSession} {onDeleteSession} />
       {/if}
@@ -457,53 +635,120 @@
       {/if}
     </div>
   </div>
+  {#if refreshError}<p role="status" class="px-6 py-2 text-xs text-gh-red">{refreshError}</p>{/if}
 
   <!-- Tabs -->
   {#if session}
-    <div class="flex border-b border-gh-border bg-gh-bg overflow-x-auto">
-      <div class="flex-1 flex justify-center">
+    <div class="session-tabs">
+      <div class="flex-1 flex items-center">
         <button
-          class="px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap {activeTab ===
-          'messages'
-            ? 'text-gh-accent border-b-2 border-gh-accent'
-            : 'text-gh-text-secondary hover:text-gh-text hover:bg-gh-border-subtle'}"
+          class="session-tab {activeTab === 'messages' ? 'active' : ''}"
           onclick={() => (activeTab = 'messages')}
         >
-          💬 Messages ({filteredMessages.length}{filteredMessages.length !== messages.length
-            ? `/${messages.length}`
-            : ''})
+          <Icon name="message" size={15} />消息
+          <span class="opacity-60"
+            >{filteredMessages.length}{filteredMessages.length !== messages.length
+              ? `/${messages.length}`
+              : ''}</span
+          >
         </button>
         {#each agents as agent}
           <button
-            class="px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap {activeTab ===
-            `agent:${agent.id}`
-              ? 'text-gh-accent border-b-2 border-gh-accent'
-              : 'text-gh-text-secondary hover:text-gh-text hover:bg-gh-border-subtle'}"
+            class="session-tab {activeTab === `agent:${agent.id}` ? 'active' : ''}"
+            title={agent.id}
             onclick={() => (activeTab = `agent:${agent.id}`)}
           >
-            🤖 <span class="hidden md:inline">{agent.id}</span><span class="md:hidden"
-              >{agent.id.replace('agent-', '')}</span
-            >
+            <Icon name="spark" size={15} /><span class="max-w-32 truncate">{agent.id}</span>
             ({agent.messageCount})
           </button>
         {/each}
       </div>
       {#if todos.length > 0}
         <button
-          class="px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap {activeTab ===
-          'todos'
-            ? 'text-gh-accent border-b-2 border-gh-accent'
-            : 'text-gh-text-secondary hover:text-gh-text hover:bg-gh-border-subtle'}"
+          class="session-tab {activeTab === 'todos' ? 'active' : ''}"
           onclick={() => (activeTab = 'todos')}
         >
-          ✅ Todos ({todos.length})
+          <Icon name="checklist" size={15} />待办 ({todos.length})
         </button>
       {/if}
     </div>
   {/if}
 
   <!-- Message Type Filter -->
-  {#if session && (activeTab === 'messages' || activeTab.startsWith('agent:'))}
+  {#if searchOpen && session && activeTab !== 'todos'}
+    <div class="session-find" data-session-find>
+      <div class="session-find-input">
+        <Icon name="search" size={16} />
+        <input
+          bind:this={searchInput}
+          value={searchDraft}
+          oninput={(event) => changeSearch(event.currentTarget.value)}
+          aria-label="搜索当前会话记录"
+          placeholder={selectedAgentId
+            ? '搜索当前子会话的消息内容…'
+            : '搜索正文、思考、工具输入/输出、Compact 总结…'}
+          onkeydown={async (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              clearTimeout(searchTimer)
+              searchQuery = searchDraft.trim()
+              await tick()
+              navigateHit(event.shiftKey ? -1 : 1)
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              closeSearch()
+            }
+          }}
+        />
+        <button
+          class="quiet-button"
+          aria-label="上一条匹配消息"
+          disabled={!searchHits.length || searchDraft.trim() !== searchQuery}
+          onclick={() => navigateHit(-1)}><Icon name="up" size={15} /></button
+        >
+        <button
+          class="quiet-button"
+          aria-label="下一条匹配消息"
+          disabled={!searchHits.length || searchDraft.trim() !== searchQuery}
+          onclick={() => navigateHit(1)}><Icon name="down" size={15} /></button
+        >
+        <button class="quiet-button" aria-label="关闭会话内搜索" onclick={closeSearch}
+          ><Icon name="close" size={15} /></button
+        >
+      </div>
+      <div class="session-find-meta">
+        <span
+          >{searchDraft.trim() !== searchQuery
+            ? '正在匹配…'
+            : searchQuery
+              ? `匹配 ${searchHits.length} 条消息 / 共 ${searchSource.length} 条记录`
+              : '仅搜索当前会话已加载记录，包含折叠内容'}</span
+        >
+        <label><input type="checkbox" bind:checked={includeMetadata} />包含元数据</label>
+      </div>
+      {#if contextMode && searchQuery}
+        <div class="session-find-context" data-search-context>
+          <span
+            >{selectedHit
+              ? `已定位第 ${selectedHit.index + 1} 条记录 · ${selectedHitIndex + 1}/${searchHits.length}`
+              : '当前记录已不再匹配'} · 完整消息流</span
+          >
+          <div>
+            <button
+              class="quiet-button"
+              disabled={!selectedHit}
+              onclick={() => selectedHit && locate(selectedHit)}>重新定位</button
+            ><button class="quiet-button text-gh-accent" onclick={() => void returnSearchResults()}
+              >返回搜索结果</button
+            >
+          </div>
+        </div>
+      {/if}
+      {#if searchError}<p role="status" class="text-xs text-gh-red mt-2">{searchError}</p>{/if}
+    </div>
+  {/if}
+  {#if session && !searchQuery && (activeTab === 'messages' || activeTab.startsWith('agent:'))}
     <MessageFilter
       messages={activeTab === 'messages' ? messages : agentMessages}
       {visibleCategories}
@@ -514,11 +759,42 @@
   {/if}
 
   <!-- Content -->
-  <div bind:this={internalScrollContainer} class="flex-1 {enableScroll ? 'overflow-y-auto' : ''}">
-    {#if !session}
-      <div class="flex items-center justify-center h-full text-gh-text-secondary">
-        Select a session to view
+  <div
+    bind:this={internalScrollContainer}
+    class="session-scroll {enableScroll ? '' : '!overflow-visible'}"
+    data-session-scroll
+  >
+    {#if loading}
+      <div
+        role="status"
+        class="flex items-center justify-center h-full gap-3 text-gh-text-secondary text-sm"
+      >
+        <Icon name="refresh" class="animate-spin" />正在加载会话…
       </div>
+    {:else if !session}
+      <div class="flex flex-col items-center justify-center h-full gap-4 text-gh-text-secondary">
+        <span class="rounded-2xl p-5 bg-gh-bg border border-gh-border"
+          ><Icon name="message" size={32} /></span
+        >
+        <p class="text-base font-medium text-gh-text">选择一个会话开始阅读</p>
+        <p class="text-xs">查看原始内容，精确编辑消息，保留后续历史。</p>
+        <button class="quiet-button border border-gh-border" onclick={() => sidebarOpen.set(true)}
+          >浏览项目 <Icon name="right" size={14} /></button
+        >
+      </div>
+    {:else if loadError}
+      <p role="alert" class="p-8 text-sm text-gh-red">{loadError}</p>
+    {:else if loadingAgent && activeTab.startsWith('agent:')}
+      <p role="status" class="p-8 text-sm text-gh-text-secondary">正在加载子会话…</p>
+    {:else if searchOpen && searchDraft.trim() !== searchQuery}
+      <p role="status" class="p-8 text-sm text-gh-text-secondary">正在匹配…</p>
+    {:else if searchOpen && searchQuery && !contextMode && activeTab !== 'todos'}
+      <SessionSearchResults
+        hits={searchHits}
+        query={searchQuery}
+        selectedKey={selectedSearchKey}
+        onLocate={locate}
+      />
     {:else if activeTab === 'messages'}
       {#if messages.length === 0}
         <div class="flex items-center justify-center h-full text-gh-text-secondary">
@@ -527,7 +803,13 @@
       {:else}
         <MessageList
           sessionId={session.id}
-          messages={filteredMessages}
+          messages={mainDisplay.map((entry) => entry.message)}
+          recordKeyList={mainDisplay.map((entry) => entry.key)}
+          activeKey={contextMode ? selectedSearchKey : null}
+          activeMatch={contextMode ? selectedHit : null}
+          {locateRequest}
+          {searchQuery}
+          onLocateError={(message) => (searchError = message)}
           onDeleteMessage={handleSessionMessageDelete}
           onEditMessage={handleEditMessage}
           {onEditTitle}
@@ -546,11 +828,11 @@
               <li class="flex items-start gap-2 p-3 bg-gh-bg rounded border border-gh-border">
                 <span class="flex-shrink-0">
                   {#if todo.status === 'completed'}
-                    ✅
+                    <Icon name="check" size={16} />
                   {:else if todo.status === 'in_progress'}
-                    🔄
+                    <Icon name="activity" size={16} />
                   {:else}
-                    ⬜
+                    <Icon name="square" size={16} />
                   {/if}
                 </span>
                 <span
@@ -574,7 +856,13 @@
       {:else}
         <MessageList
           sessionId={session.id}
-          messages={filteredAgentMessages}
+          messages={agentDisplay.map((entry) => entry.message)}
+          recordKeyList={agentDisplay.map((entry) => entry.key)}
+          activeKey={contextMode ? selectedSearchKey : null}
+          activeMatch={contextMode ? selectedHit : null}
+          {locateRequest}
+          {searchQuery}
+          onLocateError={(message) => (searchError = message)}
           onDeleteMessage={handleAgentMessageDelete}
           enableScroll={false}
           fullWidth={true}
@@ -608,7 +896,7 @@
         class="px-2 py-1 text-sm text-gh-text-secondary hover:text-gh-text hover:bg-gh-border-subtle rounded transition-colors"
         title="Dismiss (already deleted)"
       >
-        ✕
+        <Icon name="close" size={14} />
       </button>
     </div>
   {/if}

@@ -43,7 +43,7 @@ const editMessage = async (
 ) => {
   const container = page.locator(`[data-msg-id="${msgId}"]`)
   await container.hover()
-  await container.locator('button', { hasText: '📝' }).click()
+  await container.getByRole('button', { name: '编辑消息', exact: true }).click()
   const dialog = page.locator('[role="dialog"]')
   await expect(dialog).toBeVisible()
   // CartaEditor syncs on real input events — fill() alone doesn't propagate
@@ -70,9 +70,9 @@ test.describe('Message capabilities (issue #123 Scope (b))', () => {
   test.beforeEach(async ({ page }) => {
     fs.writeFileSync(FIXTURE_PATH, ORIGINAL_FIXTURE)
     await page.goto(`/session/${PROJECT}/${SESSION}`)
-    await page.waitForSelector('button:has-text("Messages")', { timeout: 10000 })
-    // tool_result / thinking / tool_use categories are hidden by default
+    await page.getByLabel('筛选消息类型', { exact: true }).click()
     await page.locator('button', { hasText: 'All' }).first().click()
+    await page.getByLabel('筛选消息类型', { exact: true }).click()
     await expect(page.locator('[data-msg-id="cap-msg-3"]')).toBeVisible()
   })
 
@@ -110,15 +110,17 @@ test.describe('Message capabilities (issue #123 Scope (b))', () => {
   test('tool_use message never shows an edit affordance (pairing invariant)', async ({ page }) => {
     const container = page.locator('[data-msg-id="cap-msg-2"]')
     await container.hover()
-    await expect(container.locator('button', { hasText: '📝' })).toHaveCount(0)
+    await expect(container.getByRole('button', { name: '编辑消息', exact: true })).toHaveCount(0)
     // delete affordance stays available (behavior-preserving)
-    await expect(container.locator('button', { hasText: '🗑️' })).toHaveCount(1)
+    await expect(
+      container.getByRole('button', { name: 'Delete message', exact: true })
+    ).toHaveCount(1)
   })
 
   test('thinking can be edited while its tool_use sibling remains untouched', async ({ page }) => {
     const container = page.locator('[data-msg-id="cap-msg-6"]')
     await container.hover()
-    await expect(container.locator('button', { hasText: '📝' })).toHaveCount(1)
+    await expect(container.getByRole('button', { name: '编辑消息', exact: true })).toHaveCount(1)
     await editMessage(page, 'cap-msg-6', 'revised mixed thinking')
     expect(contentOf(readFixtureLines()[5])[1]).toEqual({
       type: 'tool_use',
@@ -126,7 +128,9 @@ test.describe('Message capabilities (issue #123 Scope (b))', () => {
       name: 'Read',
       input: { file_path: 'a.txt' },
     })
-    await expect(container.locator('button', { hasText: '🗑️' })).toHaveCount(1)
+    await expect(
+      container.getByRole('button', { name: 'Delete message', exact: true })
+    ).toHaveCount(1)
   })
 
   test('text message editing still works (regression)', async ({ page }) => {

@@ -18,6 +18,8 @@
   import TodoItem from './TodoItem.svelte'
   import TooltipButton from './TooltipButton.svelte'
   import MessageBlocks from './MessageBlocks.svelte'
+  import Icon from './Icon.svelte'
+  import SearchHighlight from './SearchHighlight.svelte'
 
   interface Props {
     msg: Message
@@ -27,9 +29,19 @@
     onEdit?: (msg: Message) => void
     onEditTitle?: (msg: Message) => void
     onSplit?: (msg: Message) => void
+    searchQuery?: string
   }
 
-  let { msg, sessionId, isFirst = false, onDelete, onEdit, onEditTitle, onSplit }: Props = $props()
+  let {
+    msg,
+    sessionId,
+    isFirst = false,
+    onDelete,
+    onEdit,
+    onEditTitle,
+    onSplit,
+    searchQuery = '',
+  }: Props = $props()
 
   // Data attribute for scroll targeting
   const msgId = $derived(msg.uuid ?? '')
@@ -168,11 +180,9 @@
 
   // CSS classes for message type
   const messageClass = $derived.by(() => {
-    if (isHuman) return 'bg-gh-accent/15 border-l-3 border-l-gh-accent'
-    if (isAssistant) return 'bg-gh-green/15 border-l-3 border-l-gh-green'
-    if (isAgentTitle) return 'bg-blue-500/15 border-l-3 border-l-blue-500'
-    if (isCustomTitle) return 'bg-purple-500/15 border-l-3 border-l-purple-500'
-    return 'bg-gh-border-subtle'
+    if (isHuman) return 'message-row message-row-user'
+    if (isAssistant) return 'message-row message-row-assistant'
+    return 'message-row message-row-meta'
   })
 </script>
 
@@ -183,7 +193,7 @@
       onclick={() => onSplit(msg)}
       title="Split session from this message"
     >
-      ✂️
+      <Icon name="scissors" size={15} />
     </TooltipButton>
   {/if}
 {/snippet}
@@ -194,20 +204,25 @@
     onclick={() => onDelete(msg)}
     title="Delete message"
   >
-    🗑️
+    <Icon name="trash" size={15} />
   </TooltipButton>
 {/snippet}
 
 {#if (isHuman || isAssistant) && caps.canEdit}
   <div data-msg-id={msgId} class="p-4 rounded-lg group relative {messageClass} flex flex-col gap-2">
     <div class="flex flex-wrap justify-between items-center gap-2 text-xs text-gh-text-secondary">
-      <span class="font-semibold">{isHuman ? '用户' : 'Agent'} · {formatDate(msg.timestamp)}</span>
+      <div class="message-row-heading">
+        <span class="message-role-icon"><Icon name={isHuman ? 'user' : 'spark'} size={15} /></span
+        ><span class="font-semibold text-gh-text">{isHuman ? '用户' : 'Agent'}</span><span
+          class="message-timestamp">{formatDate(msg.timestamp)}</span
+        >
+      </div>
       <div class="flex items-center gap-2">
         {#if onEdit}<button
-            class="rounded border border-gh-accent/30 px-2 py-1 text-gh-accent hover:bg-gh-accent/10"
+            class="message-edit-action"
             title="Edit message content"
             aria-label="编辑消息"
-            onclick={() => onEdit(msg)}>📝 编辑消息</button
+            onclick={() => onEdit(msg)}><Icon name="edit" size={14} />编辑</button
           >{/if}
         {@render splitButton()}
         {@render deleteButton()}
@@ -215,16 +230,21 @@
     </div>
     <MessageBlocks
       content={(msg.message as { content?: unknown } | undefined)?.content ?? msg.content}
+      contentPath={(msg.message as { content?: unknown } | undefined)?.content !== undefined
+        ? '/message/content'
+        : '/content'}
+      {searchQuery}
     />
-    <details class="text-xs text-gh-text-secondary">
+    <details class="message-raw">
       <summary class="cursor-pointer py-1"
         >原始记录 · <code class="select-all break-all">{messageId}</code></summary
       >
-      <pre class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(
-          msg,
-          null,
-          2
-        )}</pre>
+      <pre
+        class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all"
+        data-search-path="$record"><SearchHighlight
+          text={JSON.stringify(msg, null, 2)}
+          query={searchQuery}
+        /></pre>
     </details>
   </div>
 {:else if isQueueOperation}
@@ -234,7 +254,7 @@
   <div data-msg-id={msgId} class="p-2 rounded-lg bg-gh-border-subtle/30 group relative">
     <div class="flex justify-between items-center text-xs text-gh-text-secondary/60">
       <span>
-        🔄 {progressData.hookName ?? progressData.type}
+        <Icon name="activity" size={14} />{progressData.hookName ?? progressData.type}
       </span>
       <div class="flex items-center gap-2">
         {@render splitButton()}
@@ -247,7 +267,7 @@
   <div data-msg-id={msgId} class="p-2 rounded-lg bg-gh-border-subtle/50 group relative">
     <div class="flex justify-between items-center text-xs text-gh-text-secondary">
       <span class="text-gh-text-secondary/70">
-        ⏱️ {turnDurationData.durationFormatted}
+        <Icon name="clock" size={14} />{turnDurationData.durationFormatted}
       </span>
       <div class="flex items-center gap-2">
         {@render splitButton()}
@@ -263,7 +283,7 @@
   >
     <div class="flex justify-between items-center text-xs text-gh-text-secondary">
       <span class="font-semibold text-emerald-400">
-        🪝 Hook ({stopHookData.hookCount})
+        <Icon name="activity" size={14} />Hook ({stopHookData.hookCount})
       </span>
       <div class="flex items-center gap-2">
         <span>{formatDate(msg.timestamp)}</span>
@@ -290,12 +310,12 @@
   <!-- File history snapshot -->
   <div
     data-msg-id={msgId}
-    class="p-4 rounded-lg bg-amber-500/10 border-l-3 border-l-amber-500 group relative"
+    class="p-4 rounded-lg group relative {snapshotData.files.length ? '' : 'compact-event'}"
     title="messageId: {messageId}"
   >
     <div class="flex justify-between mb-2 text-xs text-gh-text-secondary">
-      <span class="uppercase font-semibold text-amber-400">
-        📁 File Backups ({snapshotData.files.length})
+      <span class="inline-flex items-center gap-2 font-medium text-gh-text-secondary">
+        <Icon name="folder" size={14} />文件快照 ({snapshotData.files.length})
       </span>
       <div class="flex items-center gap-2">
         <span>{formatDate(snapshotData.timestamp)}</span>
@@ -349,7 +369,9 @@
     class="p-3 rounded-lg bg-cyan-500/10 border-l-3 border-l-cyan-500 group relative"
   >
     <div class="flex justify-between items-center text-xs text-gh-text-secondary">
-      <span class="font-semibold text-cyan-400">⚡ {commandData.name || 'Command'}</span>
+      <span class="font-semibold text-gh-text-secondary inline-flex items-center gap-2"
+        ><Icon name="terminal" size={14} />{commandData.name || 'Command'}</span
+      >
       <div class="flex items-center gap-2">
         <span>{formatDate(msg.timestamp)}</span>
         {@render splitButton()}
@@ -367,7 +389,9 @@
     class="p-3 rounded-lg bg-violet-500/10 border-l-3 border-l-violet-500 group relative"
   >
     <div class="flex justify-between items-center text-xs text-gh-text-secondary">
-      <span class="font-semibold text-violet-400">🔧 {toolUseData.name}</span>
+      <span class="font-semibold text-gh-text-secondary inline-flex items-center gap-2"
+        ><Icon name="terminal" size={14} />{toolUseData.name}</span
+      >
       <div class="flex items-center gap-2">
         <span>{formatDate(msg.timestamp)}</span>
         {@render splitButton()}
@@ -444,7 +468,7 @@
             onclick={() => onEditTitle(msg)}
             title="Edit title"
           >
-            ✏️
+            <Icon name="edit" size={15} />
           </TooltipButton>
         {/if}
         {#if caps.canEdit && onEdit}
@@ -453,7 +477,7 @@
             onclick={() => onEdit(msg)}
             title="Edit message content"
           >
-            📝
+            <Icon name="edit" size={15} />
           </TooltipButton>
         {/if}
         {@render splitButton()}
@@ -465,7 +489,9 @@
         {#each thinkingBlocks as block, i}
           <details class="text-gh-text-secondary">
             <summary class="cursor-pointer text-xs italic hover:text-gh-text select-none">
-              💭 Thinking {thinkingBlocks.length > 1 ? `(${i + 1}/${thinkingBlocks.length})` : ''}
+              <Icon name="spark" size={14} />思考过程 {thinkingBlocks.length > 1
+                ? `(${i + 1}/${thinkingBlocks.length})`
+                : ''}
             </summary>
             <p class="mt-1 whitespace-pre-wrap italic opacity-70">{block.thinking}</p>
           </details>

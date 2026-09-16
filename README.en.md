@@ -31,6 +31,17 @@ A local Web editor based on [es6kr/claude-code-sessions](https://github.com/es6k
 - Check file revisions, back up originals, replace via a synchronized temporary file, then read back and verify.
 - Restore **one field**, retaining later messages and changes to other fields.
 
+## Workspace experience
+
+- Full-width layout with an edge-aligned, collapsible project sidebar and a mobile drawer.
+- Custom SVG favicon and consistent outline icons, quieter message surfaces, and a single main text scroll flow.
+- Secondary session actions live in a More menu; type filters are collapsed by default.
+- `⌘ / Ctrl + K` focuses search. Arrow keys select results and Enter opens them. Title/ID search is immediate; full-content search is opt-in.
+- Browser back/forward restores session selection, and stale requests cannot overwrite a newer selection.
+- Session-local search (`⌘ / Ctrl + F`) finds text, thinking, tool input/output and compact summaries; results jump into the full timeline and reveal matching content.
+
+![Workspace with isolated demo data](docs/workspace.png)
+
 ![Field editor](docs/history-editor.png)
 
 ## Quick start
@@ -64,8 +75,20 @@ No OpenCode server or model API key is needed for editing. Run `./start.sh --hel
 
 ## Workflow
 
-1. Select a project and session. Text, thinking and tools are included by default; use **All** for additional internal event categories.
-2. Click **编辑消息** (Edit message).
+### Search the current session
+
+Use the search icon in the session header or `⌘ / Ctrl + F`. This searches the current session's loaded records, including collapsed or type-filtered content. An active subagent tab is searched separately.
+
+- Results show a snippet, role, time and field type. The arrow buttons and Enter / Shift+Enter move between matching messages.
+- **查看上下文** (View context) restores the complete timeline, locates the record, highlights the text and opens matching tool/thinking details.
+- **返回搜索结果** (Back to results) preserves the query; **重新定位** (Locate again) returns to the hit; Escape closes local search.
+- **包含元数据** (Include metadata) adds other fields from the loaded JSON records. Fields not exposed by the legacy renderer receive a read-only matching-source panel.
+- Search does not mutate records or call models. Indexing follows loaded data changes, input is debounced, and long result lists are rendered progressively.
+
+### Edit a field
+
+1. Select a project and session. Text, thinking and tools are included by default; expand **消息类型** (Message types) and use **All** for additional internal event categories.
+2. Click **编辑** (Edit).
 3. Choose a specific field on the left. Edit text, inspect **原始记录** (Raw record), or use sanitized Markdown **预览** (Preview).
 4. Click **保存字段** (Save field), or press `⌘ / Ctrl + Enter` or `⌘ / Ctrl + S`.
 5. Open **历史备份** (History) to inspect an earlier value and restore its field.
